@@ -1,0 +1,47 @@
+spring:
+  application:
+    name: tollbooth
+
+  datasource:
+    url: jdbc:mysql://localhost:3306/tollbooth
+    username: tollbooth
+    password: tollbooth
+
+  jpa:
+    hibernate:
+      # Creates/updates tables from our entity classes automatically.
+      # Fine for development; a real company would use migrations (Flyway).
+      ddl-auto: update
+    open-in-view: false
+
+  data:
+    redis:
+      host: localhost
+      port: 6379
+
+# Show full health details (database + redis status) at /actuator/health
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+
+tollbooth:
+  demo:
+    app-name: DemoShop
+    # The demo app's API key. Only its SHA-256 hash is stored in the database.
+    api-key: tb_demo_key_change_me
+    daily-budget-usd: 5.00
+  # Paid-tier prices in USD per 1 million tokens. On the free tier you pay nothing,
+  # but Tollbooth still calculates what each request WOULD cost.
+  # Check https://ai.google.dev/pricing and update these before measuring.
+  models:
+    - name: gemini-2.5-flash-lite
+      input-price-per-million: 0.10
+      output-price-per-million: 0.40
+    - name: gemini-2.5-flash
+      input-price-per-million: 0.30
+      output-price-per-million: 2.50

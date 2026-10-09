@@ -1,0 +1,26 @@
+# Starts the two things Tollbooth depends on.
+# Run:   docker compose up -d
+# Stop:  docker compose down
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: tollbooth-mysql
+    environment:
+      MYSQL_DATABASE: tollbooth
+      MYSQL_USER: tollbooth
+      MYSQL_PASSWORD: tollbooth
+      MYSQL_ROOT_PASSWORD: rootpass
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysqldata:/var/lib/mysql
+
+  # Redis Stack = Redis + vector search (needed later for the semantic cache)
+  redis:
+    image: redis/redis-stack-server:latest
+    container_name: tollbooth-redis
+    ports:
+      - "6379:6379"
+
+volumes:
+  mysqldata:
