@@ -11,7 +11,16 @@ import java.util.List;
  * (kebab-case keys like daily-budget-usd map to dailyBudgetUsd).
  */
 @ConfigurationProperties(prefix = "tollbooth")
-public record TollboothProperties(Demo demo, List<ModelConfig> models) {
+public record TollboothProperties(Ai ai, Demo demo, List<ModelConfig> models) {
+
+    /** Settings for talking to Gemini. */
+    public record Ai(String baseUrl,
+                     String apiKey,
+                     String defaultModel,
+                     String systemPrompt,
+                     int connectTimeoutMs,
+                     int readTimeoutMs) {
+    }
 
     public record Demo(String appName, String apiKey, BigDecimal dailyBudgetUsd) {
     }

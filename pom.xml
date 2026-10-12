@@ -14,7 +14,7 @@
 
     <groupId>com.tollbooth</groupId>
     <artifactId>tollbooth</artifactId>
-    <version>0.1.0</version>
+    <version>0.2.0</version>
     <name>tollbooth</name>
     <description>AI gateway for consumer apps' AI assistants</description>
 
@@ -38,6 +38,12 @@
             <groupId>com.mysql</groupId>
             <artifactId>mysql-connector-j</artifactId>
             <scope>runtime</scope>
+        </dependency>
+
+        <!-- Security: the API key check on every request -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
         </dependency>
 
         <!-- Redis client (used for token buckets, budget counter and cache) -->

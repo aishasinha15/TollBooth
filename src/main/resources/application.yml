@@ -19,6 +19,11 @@ spring:
       host: localhost
       port: 6379
 
+  jackson:
+    mapper:
+      # Lets clients send "regular" or "REGULAR" for enum values
+      accept-case-insensitive-enums: true
+
 # Show full health details (database + redis status) at /actuator/health
 management:
   endpoints:
@@ -30,6 +35,17 @@ management:
       show-details: always
 
 tollbooth:
+  ai:
+    base-url: https://generativelanguage.googleapis.com/v1beta
+    # Read from the GEMINI_API_KEY environment variable. Never write the real key in this file.
+    api-key: ${GEMINI_API_KEY:}
+    # Every question uses this model until routing arrives in Phase 5
+    default-model: gemini-3.5-flash-lite
+    system-prompt: >-
+      You are a helpful assistant inside a consumer app.
+      Answer clearly and briefly, in plain language.
+    connect-timeout-ms: 5000
+    read-timeout-ms: 30000
   demo:
     app-name: DemoShop
     # The demo app's API key. Only its SHA-256 hash is stored in the database.
@@ -39,9 +55,9 @@ tollbooth:
   # but Tollbooth still calculates what each request WOULD cost.
   # Check https://ai.google.dev/pricing and update these before measuring.
   models:
-    - name: gemini-2.5-flash-lite
-      input-price-per-million: 0.10
-      output-price-per-million: 0.40
-    - name: gemini-2.5-flash
+    - name: gemini-3.5-flash-lite
       input-price-per-million: 0.30
       output-price-per-million: 2.50
+    - name: gemini-3.8-flash
+      input-price-per-million: 0.75
+      output-price-per-million: 3.75
