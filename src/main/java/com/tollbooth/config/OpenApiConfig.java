@@ -23,7 +23,7 @@ public class OpenApiConfig {
         return new OpenAPI()
                 .info(new Info()
                         .title("Tollbooth API")
-                        .version("0.3.0")
+                        .version("0.4.0")
                         .description("AI gateway for consumer apps' AI assistants"))
                 .components(new Components().addSecuritySchemes(SCHEME, new SecurityScheme()
                         .type(SecurityScheme.Type.APIKEY)

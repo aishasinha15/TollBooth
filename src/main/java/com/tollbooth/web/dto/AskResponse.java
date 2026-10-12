@@ -4,7 +4,10 @@ import com.tollbooth.domain.CacheResult;
 
 import java.math.BigDecimal;
 
-/** The JSON Tollbooth sends back for POST /v1/ask. */
+/**
+ * The JSON Tollbooth sends back for POST /v1/ask.
+ * piiMasked = how many private values were hidden from the AI (0 = none).
+ */
 public record AskResponse(
         String answer,
         String model,
@@ -12,6 +15,7 @@ public record AskResponse(
         int outputTokens,
         BigDecimal costUsd,
         long latencyMs,
-        CacheResult cacheResult
+        CacheResult cacheResult,
+        int piiMasked
 ) {
 }

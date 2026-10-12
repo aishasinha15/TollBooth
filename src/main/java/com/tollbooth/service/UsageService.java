@@ -25,11 +25,12 @@ public class UsageService {
     @Transactional
     public void record(Long appId, String userId, String model,
                        int inputTokens, int outputTokens, BigDecimal costUsd,
-                       CacheResult cacheResult, String routeReason, long latencyMs) {
+                       CacheResult cacheResult, String routeReason, long latencyMs,
+                       int piiMaskedCount) {
         // getReferenceById gives a lightweight stand-in for the app (just its id),
         // without running a SELECT. Enough to fill the foreign key.
         ClientApp app = clientApps.getReferenceById(appId);
         usageRecords.save(new UsageRecord(app, userId, model, inputTokens, outputTokens,
-                costUsd, cacheResult, routeReason, latencyMs));
+                costUsd, cacheResult, routeReason, latencyMs, piiMaskedCount));
     }
 }

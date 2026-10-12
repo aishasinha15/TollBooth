@@ -41,9 +41,12 @@ tollbooth:
     api-key: ${GEMINI_API_KEY:}
     # Every question uses this model until routing arrives in Phase 5
     default-model: gemini-3.5-flash-lite
+    # The last two sentences tell the AI how to treat masked private data (Phase 4)
     system-prompt: >-
       You are a helpful assistant inside a consumer app.
       Answer clearly and briefly, in plain language.
+      Text like [EMAIL_1], [PHONE_1] or [CARD_1] stands for the user's private details.
+      Keep these placeholders exactly as written and never guess what they hide.
     connect-timeout-ms: 5000
     read-timeout-ms: 30000
   # Token bucket per user: "capacity" questions in a burst, then 1 token back every "refill-every".

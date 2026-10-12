@@ -62,6 +62,13 @@ public class UsageRecord {
     @Column(name = "latency_ms", nullable = false)
     private long latencyMs;
 
+    /**
+     * How many private values were hidden before the AI call (0 = none).
+     * The count only, never the values. Nullable so older rows stay valid.
+     */
+    @Column(name = "pii_masked_count")
+    private Integer piiMaskedCount;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt = Instant.now();
 
@@ -70,7 +77,8 @@ public class UsageRecord {
 
     public UsageRecord(ClientApp clientApp, String userId, String modelName,
                        int inputTokens, int outputTokens, BigDecimal costUsd,
-                       CacheResult cacheResult, String routeReason, long latencyMs) {
+                       CacheResult cacheResult, String routeReason, long latencyMs,
+                       int piiMaskedCount) {
         this.clientApp = clientApp;
         this.userId = userId;
         this.modelName = modelName;
@@ -80,6 +88,7 @@ public class UsageRecord {
         this.cacheResult = cacheResult;
         this.routeReason = routeReason;
         this.latencyMs = latencyMs;
+        this.piiMaskedCount = piiMaskedCount;
     }
 
     public Long getId() { return id; }
@@ -92,5 +101,6 @@ public class UsageRecord {
     public CacheResult getCacheResult() { return cacheResult; }
     public String getRouteReason() { return routeReason; }
     public long getLatencyMs() { return latencyMs; }
+    public Integer getPiiMaskedCount() { return piiMaskedCount; }
     public Instant getCreatedAt() { return createdAt; }
 }

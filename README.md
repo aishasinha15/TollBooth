@@ -2,7 +2,7 @@
 
 An AI gateway for consumer apps' AI assistants. It sits between an app's chat assistant and the AI model and adds per-user rate limits, private-data masking, answer caching, difficulty-based model routing and daily budget control.
 
-> Work in progress. Done so far: project skeleton with MySQL and Redis (Phase 1), API key security and Gemini calls with usage metering (Phase 2), per-user token bucket rate limiting (Phase 3).
+> Work in progress. Done so far: project skeleton with MySQL and Redis (Phase 1), API key security and Gemini calls with usage metering (Phase 2), per-user token bucket rate limiting (Phase 3), private-data masking (Phase 4).
 
 ## Run it
 
@@ -31,6 +31,7 @@ curl -X POST http://localhost:8080/v1/ask \
 
 - **API keys** are stored as SHA-256 hashes, never in plain text.
 - **Rate limiting** uses a token bucket per user, implemented as a Lua script that runs atomically inside Redis. Under 100 simultaneous requests against a bucket of 20, exactly 20 pass. Rejected requests get `429` with a `Retry-After` header; every response carries `X-RateLimit-Remaining`. If Redis is unreachable, requests are allowed (fail open).
+- **Private-data masking** replaces emails, Indian mobile numbers and card numbers (Luhn-checked) with placeholders like `[PHONE_1]` before anything reaches the AI, then restores the real values in the answer. The lookup table lives only in memory for that one request.
 - **Usage metering** records model, tokens, cost and latency for every answered question in MySQL.
 
 ## Notes
