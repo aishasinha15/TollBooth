@@ -1,11 +1,13 @@
 package com.tollbooth.web;
 
 import com.tollbooth.security.AppPrincipal;
+import com.tollbooth.service.AskOutcome;
 import com.tollbooth.service.AskService;
 import com.tollbooth.web.dto.AskRequest;
 import com.tollbooth.web.dto.AskResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import jakarta.validation.Valid;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -20,6 +22,8 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/v1")
 public class AskController {
 
+    public static final String RATE_LIMIT_REMAINING_HEADER = "X-RateLimit-Remaining";
+
     private final AskService askService;
 
     public AskController(AskService askService) {
@@ -28,8 +32,16 @@ public class AskController {
 
     @Operation(summary = "Ask the AI a question on behalf of one of the app's users")
     @PostMapping("/ask")
-    public AskResponse ask(@AuthenticationPrincipal AppPrincipal app,
-                           @Valid @RequestBody AskRequest request) {
-        return askService.ask(app, request);
+    public ResponseEntity<AskResponse> ask(@AuthenticationPrincipal AppPrincipal app,
+                                           @Valid @RequestBody AskRequest request) {
+        AskOutcome outcome = askService.ask(app, request);
+
+        // ResponseEntity lets us set headers as well as the body.
+        // The header tells the app how many questions this user has left right now.
+        ResponseEntity.BodyBuilder builder = ResponseEntity.ok();
+        if (outcome.rateLimit().remaining() >= 0) {
+            builder.header(RATE_LIMIT_REMAINING_HEADER, String.valueOf(outcome.rateLimit().remaining()));
+        }
+        return builder.body(outcome.response());
     }
 }

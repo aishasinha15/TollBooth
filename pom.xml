@@ -14,7 +14,7 @@
 
     <groupId>com.tollbooth</groupId>
     <artifactId>tollbooth</artifactId>
-    <version>0.2.0</version>
+    <version>0.3.0</version>
     <name>tollbooth</name>
     <description>AI gateway for consumer apps' AI assistants</description>
 

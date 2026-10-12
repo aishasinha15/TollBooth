@@ -78,6 +78,9 @@ public class GeminiClient implements AiClient {
             if (status == 429) {
                 throw new AiProviderException("AI provider rate limit reached, try again shortly", 503, e);
             }
+            if (status == 404) {
+                throw new AiProviderException("AI model '" + model + "' not found (check the model name in application.yml)", 502, e);
+            }
             if (status == 400 || status == 403) {
                 throw new AiProviderException("AI provider rejected the request (check model name and API key)", 502, e);
             }

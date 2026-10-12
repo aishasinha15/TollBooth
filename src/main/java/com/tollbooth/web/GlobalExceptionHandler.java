@@ -1,8 +1,11 @@
 package com.tollbooth.web;
 
 import com.tollbooth.ai.AiProviderException;
+import com.tollbooth.ratelimit.RateLimitExceededException;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
+import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -37,6 +40,22 @@ public class GlobalExceptionHandler {
     public ProblemDetail handleUnreadable(HttpMessageNotReadableException ex) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST,
                 "Request body is not valid JSON or has an unknown value");
+    }
+
+    /**
+     * The user's token bucket is empty: 429 Too Many Requests.
+     * Retry-After is the standard header telling the app how many seconds to wait.
+     */
+    @ExceptionHandler(RateLimitExceededException.class)
+    public ResponseEntity<ProblemDetail> handleRateLimit(RateLimitExceededException ex) {
+        long seconds = ex.getRetryAfterSeconds();
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.TOO_MANY_REQUESTS,
+                "Too many questions. Try again in " + seconds + " seconds.");
+        problem.setProperty("retryAfterSeconds", seconds);
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header(HttpHeaders.RETRY_AFTER, String.valueOf(seconds))
+                .header(AskController.RATE_LIMIT_REMAINING_HEADER, "0")
+                .body(problem);
     }
 
     /** The AI provider failed (timeout, rate limit, blocked answer...). */
