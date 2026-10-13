@@ -39,8 +39,12 @@ tollbooth:
     base-url: https://generativelanguage.googleapis.com/v1beta
     # Read from the GEMINI_API_KEY environment variable. Never write the real key in this file.
     api-key: ${GEMINI_API_KEY:}
-    # Every question uses this model until routing arrives in Phase 5
-    default-model: gemini-3.5-flash-lite
+    # Routing (Phase 5): EASY questions -> cheap model, HARD questions -> smart model.
+    # The cheap model is also the fallback if the smart one fails, and the only model once the budget runs low.
+    cheap-model: gemini-3.5-flash-lite
+    smart-model: gemini-3.6-flash
+    # Answer length assumed when reserving budget before a call; the real cost is settled afterwards
+    estimated-output-tokens: 400
     # The last two sentences tell the AI how to treat masked private data (Phase 4)
     system-prompt: >-
       You are a helpful assistant inside a consumer app.
@@ -48,7 +52,7 @@ tollbooth:
       Text like [EMAIL_1], [PHONE_1] or [CARD_1] stands for the user's private details.
       Keep these placeholders exactly as written and never guess what they hide.
     connect-timeout-ms: 5000
-    read-timeout-ms: 30000
+    read-timeout-ms: 60000
   # Token bucket per user: "capacity" questions in a burst, then 1 token back every "refill-every".
   # Demo values are small so you can hit the limit by hand and stay under Gemini's free-tier limits.
   # A real app might use regular: 20 / 3s, premium: 60 / 1s.
@@ -59,10 +63,20 @@ tollbooth:
     premium:
       capacity: 10
       refill-every: 6s
+  # Daily AI budget per app (the amount itself is set per app, e.g. demo.daily-budget-usd below).
+  #   below warn-at-percent : normal
+  #   warn-at-percent..100% : normal, with "budgetWarning": true in the response
+  #   100%..hard-stop       : every question goes to the cheap model
+  #   at hard-stop-percent  : 503, no more AI calls until midnight
+  budget:
+    warn-at-percent: 80
+    hard-stop-percent: 120
+    timezone: Asia/Kolkata
   demo:
     app-name: DemoShop
     # The demo app's API key. Only its SHA-256 hash is stored in the database.
     api-key: tb_demo_key_change_me
+    # Applied to DemoShop on every start. Set it to 0.002 to watch the budget kick in after a few questions.
     daily-budget-usd: 5.00
   # Paid-tier prices in USD per 1 million tokens. On the free tier you pay nothing,
   # but Tollbooth still calculates what each request WOULD cost.
@@ -72,6 +86,9 @@ tollbooth:
     - name: gemini-3.5-flash-lite
       input-price-per-million: 0.30
       output-price-per-million: 2.50
+    - name: gemini-3.6-flash
+      input-price-per-million: 0.75
+      output-price-per-million: 3.75
     - name: gemini-3.8-flash
       input-price-per-million: 0.75
       output-price-per-million: 3.75

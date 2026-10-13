@@ -9,9 +9,11 @@ import org.springframework.http.MediaType;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.ResourceAccessException;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
 
+import java.net.SocketTimeoutException;
 import java.util.List;
 import java.util.Objects;
 import java.util.stream.Collectors;
@@ -88,6 +90,14 @@ public class GeminiClient implements AiClient {
         } catch (ResourceAccessException e) {
             // Network problem or timeout: we never got an answer
             throw new AiProviderException("AI provider did not respond in time", 503, e);
+        } catch (RestClientException e) {
+            // Anything else from the HTTP client, e.g. a timeout while reading the reply.
+            // Without this catch-all, such errors escaped as a raw 500 and skipped the fallback.
+            boolean timedOut = hasCause(e, SocketTimeoutException.class);
+            log.warn("Gemini call failed: {}", e.getMessage());
+            throw new AiProviderException(timedOut
+                    ? "AI provider did not respond in time"
+                    : "AI provider call failed", 503, e);
         }
 
         return toResult(response);
@@ -115,6 +125,16 @@ public class GeminiClient implements AiClient {
         int output = usage == null ? 0 : orZero(usage.candidatesTokenCount()) + orZero(usage.thoughtsTokenCount());
 
         return new AiResult(text, input, output);
+    }
+
+    /** Walks the "caused by" chain looking for a specific exception type. */
+    private static boolean hasCause(Throwable error, Class<? extends Throwable> type) {
+        for (Throwable t = error; t != null; t = t.getCause()) {
+            if (type.isInstance(t)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static int orZero(Integer value) {

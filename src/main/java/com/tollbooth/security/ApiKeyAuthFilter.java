@@ -57,7 +57,7 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
         }
 
         ClientApp app = match.get().getClientApp();
-        AppPrincipal principal = new AppPrincipal(app.getId(), app.getName());
+        AppPrincipal principal = new AppPrincipal(app.getId(), app.getName(), app.getDailyBudgetUsd());
 
         // Tell Spring Security: this request is authenticated, and here is who it is
         UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(

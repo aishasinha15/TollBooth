@@ -38,7 +38,8 @@ public class AskController {
 
         // ResponseEntity lets us set headers as well as the body.
         // The header tells the app how many questions this user has left right now.
-        ResponseEntity.BodyBuilder builder = ResponseEntity.ok();
+        ResponseEntity.BodyBuilder builder = ResponseEntity.ok()
+                .header("X-Model", outcome.response().model());
         if (outcome.rateLimit().remaining() >= 0) {
             builder.header(RATE_LIMIT_REMAINING_HEADER, String.valueOf(outcome.rateLimit().remaining()));
         }

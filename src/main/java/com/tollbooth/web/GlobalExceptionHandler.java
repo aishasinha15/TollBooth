@@ -1,6 +1,7 @@
 package com.tollbooth.web;
 
 import com.tollbooth.ai.AiProviderException;
+import com.tollbooth.budget.BudgetExhaustedException;
 import com.tollbooth.ratelimit.RateLimitExceededException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -56,6 +57,13 @@ public class GlobalExceptionHandler {
                 .header(HttpHeaders.RETRY_AFTER, String.valueOf(seconds))
                 .header(AskController.RATE_LIMIT_REMAINING_HEADER, "0")
                 .body(problem);
+    }
+
+    /** The app spent past its hard stop for today: no more AI calls until midnight. */
+    @ExceptionHandler(BudgetExhaustedException.class)
+    public ProblemDetail handleBudget(BudgetExhaustedException ex) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.SERVICE_UNAVAILABLE,
+                "This app's daily AI budget is used up. It resets at midnight.");
     }
 
     /** The AI provider failed (timeout, rate limit, blocked answer...). */

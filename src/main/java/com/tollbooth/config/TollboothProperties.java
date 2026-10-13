@@ -13,15 +13,23 @@ import java.util.List;
  * and values like "12s" become a Duration).
  */
 @ConfigurationProperties(prefix = "tollbooth")
-public record TollboothProperties(Ai ai, RateLimit rateLimit, Demo demo, List<ModelConfig> models) {
+public record TollboothProperties(Ai ai, RateLimit rateLimit, Budget budget, Demo demo, List<ModelConfig> models) {
 
-    /** Settings for talking to Gemini. */
+    /**
+     * Settings for talking to Gemini.
+     *
+     * @param cheapModel            used for EASY questions, fallbacks and when the budget runs low
+     * @param smartModel            used for HARD questions while the budget allows
+     * @param estimatedOutputTokens answer length assumed when reserving budget before a call
+     */
     public record Ai(String baseUrl,
                      String apiKey,
-                     String defaultModel,
+                     String cheapModel,
+                     String smartModel,
                      String systemPrompt,
                      int connectTimeoutMs,
-                     int readTimeoutMs) {
+                     int readTimeoutMs,
+                     int estimatedOutputTokens) {
     }
 
     /** Token bucket sizes per user tier. */
@@ -33,6 +41,14 @@ public record TollboothProperties(Ai ai, RateLimit rateLimit, Demo demo, List<Mo
      * @param refillEvery how long it takes to earn back one question
      */
     public record Bucket(int capacity, Duration refillEvery) {
+    }
+
+    /**
+     * @param warnAtPercent    show a warning from this % of the daily budget
+     * @param hardStopPercent  refuse AI calls from this % (above 100, so cheap answers continue a bit past budget)
+     * @param timezone         when "today" starts and ends, e.g. Asia/Kolkata
+     */
+    public record Budget(int warnAtPercent, int hardStopPercent, String timezone) {
     }
 
     public record Demo(String appName, String apiKey, BigDecimal dailyBudgetUsd) {

@@ -45,6 +45,9 @@ public class DataSeeder implements CommandLineRunner {
 
         ClientApp app = clientApps.findByName(demo.appName())
                 .orElseGet(() -> clientApps.save(new ClientApp(demo.appName(), demo.dailyBudgetUsd())));
+        // Keep the budget in sync with application.yml, so you can change it and restart
+        app.setDailyBudgetUsd(demo.dailyBudgetUsd());
+        clientApps.save(app);
 
         String keyHash = Hashing.sha256Hex(demo.apiKey());
         if (!apiKeys.existsByKeyHash(keyHash)) {
@@ -60,6 +63,7 @@ public class DataSeeder implements CommandLineRunner {
             modelPrices.save(price);
         }
 
-        log.info("Seed data ready: app '{}' (id {}), {} model prices", app.getName(), app.getId(), props.models().size());
+        log.info("Seed data ready: app '{}' (id {}), daily budget ${}, {} model prices",
+                app.getName(), app.getId(), app.getDailyBudgetUsd(), props.models().size());
     }
 }
