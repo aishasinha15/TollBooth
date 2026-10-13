@@ -33,11 +33,15 @@ public class GeminiClient implements AiClient {
     private final RestClient restClient;
     private final String apiKey;
     private final String systemPrompt;
+    private final String embeddingModel;
+    private final int embeddingDimensions;
 
     public GeminiClient(RestClient.Builder builder, TollboothProperties props) {
         TollboothProperties.Ai ai = props.ai();
         this.apiKey = ai.apiKey();
         this.systemPrompt = ai.systemPrompt();
+        this.embeddingModel = ai.embeddingModel();
+        this.embeddingDimensions = ai.embeddingDimensions();
 
         // Timeouts: never let a slow AI call hang a request forever
         SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
@@ -103,6 +107,44 @@ public class GeminiClient implements AiClient {
         return toResult(response);
     }
 
+    /**
+     * One HTTP POST to {baseUrl}/models/{embeddingModel}:embedContent.
+     * taskType SEMANTIC_SIMILARITY tunes the numbers for "do these two texts mean the same thing?".
+     */
+    @Override
+    public float[] embed(String text) {
+        if (apiKey == null || apiKey.isBlank()) {
+            throw new AiProviderException("GEMINI_API_KEY is not set on the server", 503);
+        }
+        EmbedRequest body = new EmbedRequest(
+                new Content(null, List.of(new Part(text))), "SEMANTIC_SIMILARITY", embeddingDimensions);
+        EmbedResponse response;
+        try {
+            response = restClient.post()
+                    .uri("/models/{model}:embedContent", embeddingModel)
+                    .header("x-goog-api-key", apiKey)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(body)
+                    .retrieve()
+                    .body(EmbedResponse.class);
+        } catch (RestClientResponseException e) {
+            log.warn("Gemini embedding returned HTTP {}: {}", e.getStatusCode().value(), e.getResponseBodyAsString());
+            throw new AiProviderException("Embedding failed (HTTP " + e.getStatusCode().value() + ")", 503, e);
+        } catch (RestClientException e) {
+            throw new AiProviderException("Embedding failed: " + e.getMessage(), 503, e);
+        }
+        if (response == null || response.embedding() == null || response.embedding().values() == null
+                || response.embedding().values().isEmpty()) {
+            throw new AiProviderException("Embedding returned no numbers", 502);
+        }
+        List<Double> values = response.embedding().values();
+        float[] vector = new float[values.size()];
+        for (int i = 0; i < vector.length; i++) {
+            vector[i] = values.get(i).floatValue();
+        }
+        return vector;
+    }
+
     private AiResult toResult(GeminiResponse response) {
         if (response == null || response.candidates() == null || response.candidates().isEmpty()) {
             throw new AiProviderException("AI provider returned no answer", 502);
@@ -165,6 +207,18 @@ public class GeminiClient implements AiClient {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record Candidate(Content content, String finishReason) {
+    }
+
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public record EmbedRequest(Content content, String taskType, Integer outputDimensionality) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record EmbedResponse(Embedding embedding) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record Embedding(List<Double> values) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)

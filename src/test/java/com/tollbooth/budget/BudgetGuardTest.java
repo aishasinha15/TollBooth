@@ -47,7 +47,7 @@ class BudgetGuardTest {
             redisAvailable = false;
         }
         TollboothProperties props = new TollboothProperties(null, null,
-                new TollboothProperties.Budget(80, 120, "Asia/Kolkata"), null, null);
+                new TollboothProperties.Budget(80, 120, "Asia/Kolkata"), null, null, null);
         guard = new BudgetGuard(template, props);
     }
 

@@ -77,6 +77,29 @@ public class BudgetGuard {
         }
     }
 
+    /** Adds a small cost that had no reservation (e.g. the cache's grey-zone check). */
+    public void addSpend(String key, long micros) {
+        if (micros <= 0) {
+            return;
+        }
+        try {
+            redis.opsForValue().increment(key, micros);
+            redis.expire(key, java.time.Duration.ofSeconds(TWO_DAYS_SECONDS));
+        } catch (DataAccessException e) {
+            log.warn("Could not add spend: {}", e.getMessage());
+        }
+    }
+
+    /** Today's spend so far, without reserving anything (used for cache hits). */
+    public long currentSpent(String key) {
+        try {
+            String value = redis.opsForValue().get(key);
+            return value == null ? 0 : Long.parseLong(value);
+        } catch (DataAccessException | NumberFormatException e) {
+            return 0;
+        }
+    }
+
     /** The AI call failed: give the reserved estimate back. */
     public void release(BudgetReservation reservation) {
         settle(reservation, 0);

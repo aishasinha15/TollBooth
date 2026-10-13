@@ -10,8 +10,14 @@ package com.tollbooth.ai;
 public interface AiClient {
 
     /**
-     * @param model  which model to use, e.g. "gemini-2.5-flash-lite"
-     * @param prompt the user's question (already masked of private data, from Phase 4)
+     * @param model  which model to use, e.g. "gemini-3.5-flash-lite"
+     * @param prompt the user's question (already masked of private data)
      */
     AiResult generate(String model, String prompt);
+
+    /**
+     * Turns text into an embedding: a list of numbers that captures its meaning.
+     * Questions that mean the same thing get similar numbers (used by the semantic cache).
+     */
+    float[] embed(String text);
 }

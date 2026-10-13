@@ -13,7 +13,8 @@ import java.util.List;
  * and values like "12s" become a Duration).
  */
 @ConfigurationProperties(prefix = "tollbooth")
-public record TollboothProperties(Ai ai, RateLimit rateLimit, Budget budget, Demo demo, List<ModelConfig> models) {
+public record TollboothProperties(Ai ai, RateLimit rateLimit, Budget budget, Cache cache,
+                                  Demo demo, List<ModelConfig> models) {
 
     /**
      * Settings for talking to Gemini.
@@ -21,6 +22,8 @@ public record TollboothProperties(Ai ai, RateLimit rateLimit, Budget budget, Dem
      * @param cheapModel            used for EASY questions, fallbacks and when the budget runs low
      * @param smartModel            used for HARD questions while the budget allows
      * @param estimatedOutputTokens answer length assumed when reserving budget before a call
+     * @param embeddingModel        turns text into a list of numbers for the semantic cache
+     * @param embeddingDimensions   how many numbers per embedding (smaller = less storage)
      */
     public record Ai(String baseUrl,
                      String apiKey,
@@ -29,7 +32,9 @@ public record TollboothProperties(Ai ai, RateLimit rateLimit, Budget budget, Dem
                      String systemPrompt,
                      int connectTimeoutMs,
                      int readTimeoutMs,
-                     int estimatedOutputTokens) {
+                     int estimatedOutputTokens,
+                     String embeddingModel,
+                     int embeddingDimensions) {
     }
 
     /** Token bucket sizes per user tier. */
@@ -49,6 +54,18 @@ public record TollboothProperties(Ai ai, RateLimit rateLimit, Budget budget, Dem
      * @param timezone         when "today" starts and ends, e.g. Asia/Kolkata
      */
     public record Budget(int warnAtPercent, int hardStopPercent, String timezone) {
+    }
+
+    /**
+     * @param enabled            turn the whole cache on or off
+     * @param ttl                how long a saved answer stays valid, e.g. 24h
+     * @param semanticThreshold   below this similarity: not the same question (miss)
+     * @param autoAcceptThreshold at or above this: reuse straight away (near-identical wording).
+     *                            In between ("grey zone"): the cheap model confirms YES/NO first.
+     * @param maxSemanticEntries  how many recent questions per app the semantic cache compares against
+     */
+    public record Cache(boolean enabled, Duration ttl, double semanticThreshold, double autoAcceptThreshold,
+                        int maxSemanticEntries) {
     }
 
     public record Demo(String appName, String apiKey, BigDecimal dailyBudgetUsd) {

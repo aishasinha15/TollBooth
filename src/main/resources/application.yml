@@ -51,7 +51,11 @@ tollbooth:
       Answer clearly and briefly, in plain language.
       Text like [EMAIL_1], [PHONE_1] or [CARD_1] stands for the user's private details.
       Keep these placeholders exactly as written and never guess what they hide.
+    # Semantic cache (Phase 6): turns each question into 768 numbers that capture its meaning
+    embedding-model: gemini-embedding-001
+    embedding-dimensions: 768
     connect-timeout-ms: 5000
+    # Smart models "think" before answering; long planning answers can take 30+ seconds
     read-timeout-ms: 60000
   # Token bucket per user: "capacity" questions in a burst, then 1 token back every "refill-every".
   # Demo values are small so you can hit the limit by hand and stay under Gemini's free-tier limits.
@@ -72,6 +76,22 @@ tollbooth:
     warn-at-percent: 80
     hard-stop-percent: 120
     timezone: Asia/Kolkata
+  # Answer cache (Phase 6). Only GENERAL questions with no private data are ever cached.
+  #   exact cache    : same question after lower-casing and removing punctuation
+  #   semantic cache : different words, same meaning, judged by embedding similarity (0 to 1):
+  #     >= auto-accept-threshold              -> reuse straight away (near-identical wording)
+  #     semantic-threshold .. auto-accept     -> grey zone: for HARD questions the cheap model confirms
+  #                                              "same question?" first; for EASY ones it's a miss (a fresh
+  #                                              cheap answer costs about as much as the check would)
+  #     < semantic-threshold                  -> miss
+  # Why a grey zone: measured scores overlap. "exchange policy" scored 0.925 against "return policy"
+  # (different answer), while "can I send back an item" scored 0.914 (same answer).
+  cache:
+    enabled: true
+    ttl: 24h
+    semantic-threshold: 0.88
+    auto-accept-threshold: 0.94
+    max-semantic-entries: 500
   demo:
     app-name: DemoShop
     # The demo app's API key. Only its SHA-256 hash is stored in the database.
@@ -81,7 +101,7 @@ tollbooth:
   # Paid-tier prices in USD per 1 million tokens. On the free tier you pay nothing,
   # but Tollbooth still calculates what each request WOULD cost.
   # Source: https://ai.google.dev/gemini-api/docs/pricing (checked Oct 2026).
-  # gemini-3.8-flash prices double from Jan 1, 2027 (to 1.50 / 7.50).
+  # gemini-3.6-flash and gemini-3.8-flash prices double from Jan 1, 2027 (to 1.50 / 7.50).
   models:
     - name: gemini-3.5-flash-lite
       input-price-per-million: 0.30

@@ -6,6 +6,8 @@ import com.tollbooth.ai.AiResult;
 import com.tollbooth.budget.BudgetExhaustedException;
 import com.tollbooth.budget.BudgetGuard;
 import com.tollbooth.budget.BudgetReservation;
+import com.tollbooth.cache.AnswerCache;
+import com.tollbooth.cache.CacheLookup;
 import com.tollbooth.config.TollboothProperties;
 import com.tollbooth.domain.CacheResult;
 import com.tollbooth.pii.MaskResult;
@@ -19,6 +21,7 @@ import com.tollbooth.routing.RouteDecision;
 import com.tollbooth.security.AppPrincipal;
 import com.tollbooth.web.dto.AskRequest;
 import com.tollbooth.web.dto.AskResponse;
+import com.tollbooth.web.dto.QuestionCategory;
 import com.tollbooth.web.dto.UserTier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,10 +34,10 @@ import java.math.BigDecimal;
  *
  * Flow:
  *   1 rate limit -> 2 mask private data -> 3 route (easy/hard)
- *   -> 4 reserve budget (may downgrade to the cheap model, or stop at the hard limit)
- *   -> 5 call the AI (smart model falls back to cheap on failure)
- *   -> 6 restore private data -> 7 settle the real cost -> 8 record the bill -> respond.
- * Still to slot in: cache lookup before step 3 and cache save after step 6 (Phase 6).
+ *   -> 4 cache lookup (exact, then semantic): on a hit, answer instantly for free
+ *   -> 5 reserve budget (may downgrade to the cheap model, or stop at the hard limit)
+ *   -> 6 call the AI (smart model falls back to cheap on failure)
+ *   -> 7 restore private data -> 8 save to cache -> 9 settle the real cost -> 10 record the bill.
  *
  * Note: this method is NOT @Transactional. An AI call can take seconds, and
  * holding a database connection open that long would starve other requests.
@@ -51,11 +54,12 @@ public class AskService {
     private final PiiMasker piiMasker;
     private final DifficultyRouter router;
     private final BudgetGuard budgetGuard;
+    private final AnswerCache answerCache;
     private final TollboothProperties props;
 
     public AskService(AiClient aiClient, CostCalculator costCalculator, UsageService usageService,
                       TokenBucketRateLimiter rateLimiter, PiiMasker piiMasker, DifficultyRouter router,
-                      BudgetGuard budgetGuard, TollboothProperties props) {
+                      BudgetGuard budgetGuard, AnswerCache answerCache, TollboothProperties props) {
         this.aiClient = aiClient;
         this.costCalculator = costCalculator;
         this.usageService = usageService;
@@ -63,6 +67,7 @@ public class AskService {
         this.piiMasker = piiMasker;
         this.router = router;
         this.budgetGuard = budgetGuard;
+        this.answerCache = answerCache;
         this.props = props;
     }
 
@@ -84,11 +89,29 @@ public class AskService {
         String cheapModel = props.ai().cheapModel();
         String smartModel = props.ai().smartModel();
 
-        // 4. Reserve an estimate from today's budget (atomic, in Redis)
         long budgetMicros = BudgetGuard.toMicros(app.dailyBudgetUsd());
+        String budgetKey = budgetGuard.todayKey(app.appId());
+
+        // 4. Cache: only GENERAL questions with no private data, so no user ever sees another's answer
+        boolean cacheable = props.cache().enabled()
+                && request.category() == QuestionCategory.GENERAL
+                && !masked.hasPii();
+        // The grey-zone YES/NO check only pays off when the answer it might save is expensive (HARD)
+        boolean allowCheck = route.difficulty() == Difficulty.HARD;
+        CacheLookup cached = cacheable
+                ? answerCache.lookup(app.appId(), masked.maskedText(), allowCheck)
+                : CacheLookup.miss(null);
+        if (cached.isHit()) {
+            if (cached.result() == CacheResult.HIT_SEMANTIC) {
+                answerCache.rememberWording(app.appId(), masked.maskedText(), cached.answer());
+            }
+            return answerFromCache(app, request, cached, route, budgetMicros, budgetKey, limit, start);
+        }
+
+        // 5. Reserve an estimate from today's budget (atomic, in Redis)
         long hardLimitMicros = budgetMicros * props.budget().hardStopPercent() / 100;
         BudgetReservation reservation = budgetGuard.reserve(
-                budgetGuard.todayKey(app.appId()), budgetMicros, hardLimitMicros,
+                budgetKey, budgetMicros, hardLimitMicros,
                 route.difficulty() == Difficulty.HARD,
                 estimateMicros(smartModel, masked.maskedText()),
                 estimateMicros(cheapModel, masked.maskedText()));
@@ -98,11 +121,14 @@ public class AskService {
 
         String model = reservation.smartAllowed() ? smartModel : cheapModel;
         String routeReason = route.reason();
+        if (cached.note() != null) {
+            routeReason += "; cache: " + cached.note();
+        }
         if (route.difficulty() == Difficulty.HARD && !reservation.smartAllowed()) {
             routeReason += "; budget almost used, downgraded to " + cheapModel;
         }
 
-        // 5. Ask the AI. If the smart model fails, try the cheap one once before giving up.
+        // 6. Ask the AI. If the smart model fails, try the cheap one once before giving up.
         //    On any final failure, hand the reserved budget back before passing the error on.
         AiResult result;
         try {
@@ -122,16 +148,23 @@ public class AskService {
             throw failure;
         }
 
-        // 6. Put the real values back so the user sees a normal answer
+        // 7. Put the real values back so the user sees a normal answer
         String answer = masked.restore(result.text());
 
-        // 7. Real cost: swap the reserved estimate for it
-        BigDecimal cost = costCalculator.cost(model, result.inputTokens(), result.outputTokens());
+        // 8. Save for next time (reusing the embedding computed during lookup)
+        if (cacheable) {
+            answerCache.save(app.appId(), masked.maskedText(), answer, model, cached.embedding());
+        }
+
+        // 9. Real cost: swap the reserved estimate for it
+        // (includes the grey-zone cache check, if one ran before this miss)
+        BigDecimal cost = costCalculator.cost(model, result.inputTokens(), result.outputTokens())
+                .add(cached.checkCost());
         long spentMicros = budgetGuard.settle(reservation, BudgetGuard.toMicros(cost));
-        int usedPercent = budgetMicros > 0 ? (int) (spentMicros * 100 / budgetMicros) : 0;
+        int usedPercent = percent(spentMicros, budgetMicros);
         boolean budgetWarning = usedPercent >= props.budget().warnAtPercent();
 
-        // 8. The bill
+        // 10. The bill
         long latencyMs = (System.nanoTime() - start) / 1_000_000;
         usageService.record(app.appId(), request.userId(), model,
                 result.inputTokens(), result.outputTokens(), cost,
@@ -141,6 +174,40 @@ public class AskService {
                 result.outputTokens(), cost, latencyMs, CacheResult.MISS, masked.maskedCount(),
                 route.difficulty(), routeReason, usedPercent, budgetWarning);
         return new AskOutcome(response, limit);
+    }
+
+    /**
+     * A cache hit: no answer generated, no budget reservation. Free, except a grey-zone hit,
+     * which cost one tiny YES/NO check. Still recorded in the bill,
+     * so savings can be measured (count of HIT rows x what they would have cost).
+     */
+    private AskOutcome answerFromCache(AppPrincipal app, AskRequest request, CacheLookup cached,
+                                       RouteDecision route, long budgetMicros, String budgetKey,
+                                       RateLimitResult limit, long start) {
+        String reason = cached.result() == CacheResult.HIT_EXACT
+                ? "cache hit (exact match)"
+                : String.format("cache hit (semantic, similarity %.3f to \"%s\", %s)",
+                        cached.similarity(), cached.answer().question(), cached.note());
+        long latencyMs = (System.nanoTime() - start) / 1_000_000;
+
+        // A confirmed grey-zone hit cost a tiny YES/NO check; everything else is free
+        BigDecimal cost = cached.checkCost();
+        String checkModel = cost.signum() > 0 ? props.ai().cheapModel() : null;
+        if (cost.signum() > 0) {
+            budgetGuard.addSpend(budgetKey, BudgetGuard.toMicros(cost));
+        }
+        usageService.record(app.appId(), request.userId(), checkModel, 0, 0, cost,
+                cached.result(), reason, latencyMs, 0);
+
+        int usedPercent = percent(budgetGuard.currentSpent(budgetKey), budgetMicros);
+        AskResponse response = new AskResponse(cached.answer().answer(), cached.answer().model(), 0, 0,
+                cost, latencyMs, cached.result(), 0, route.difficulty(), reason,
+                usedPercent, usedPercent >= props.budget().warnAtPercent());
+        return new AskOutcome(response, limit);
+    }
+
+    private static int percent(long spentMicros, long budgetMicros) {
+        return budgetMicros > 0 ? (int) (spentMicros * 100 / budgetMicros) : 0;
     }
 
     /**
