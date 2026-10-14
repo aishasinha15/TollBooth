@@ -126,9 +126,9 @@ So similarity is only used to find the closest candidate; a judge decides. Two j
 | Open-source duplicate-question model ([quora-distilroberta-base](https://huggingface.co/cross-encoder/quora-distilroberta-base)) | 18 of 39 (46%) | 3 | $0 (own container) |
 | **Gemini YES/NO check** (`gemini-3.5-flash-lite`) | **38 of 39 (97%)** | **1** | **~$0.00004** |
 
-With the Gemini judge checking every similar question: **24 of 25** paraphrases reuse the saved answer, **1** wrong hit ("return policy" vs "refund policy", a debatable label), **24 of 25** look-alikes are correctly answered fresh. The YES/NO prompt was not tuned to this test set, to avoid overfitting.
+With the Gemini check on all similar questions (easy and hard): **24 of 25** paraphrases reused the saved answer, and **24 of 25** look-alikes were correctly answered fresh. The **1** wrong hit was "return policy" vs "refund policy", a debatable label. The YES/NO instruction was written once and not reworded to score better on these 50 pairs, so the result is an honest estimate, not overfitted.
 
-A check costs about 1/40 of a typical cheap answer, and about 6 in 10 checks said YES (25 of 39), so checking every question pays for itself.
+A check costs about 1/40 of a typical cheap answer, and about 6 in 10 checks said YES (25 of 39), so checking every similar question pays for itself.
 
 ### Concurrency
 
