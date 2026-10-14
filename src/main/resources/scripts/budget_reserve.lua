@@ -23,8 +23,10 @@ local wants_smart = tonumber(ARGV[3])
 local smart_estimate = tonumber(ARGV[4])
 local cheap_estimate = tonumber(ARGV[5])
 
--- Past the hard stop: no more AI calls today
-if spent >= hard_limit then
+-- Phase 7: the estimates are WORST cases (the longest answer allowed), so if even the
+-- cheap model's worst case would cross the hard stop, refuse. Spending can then never pass it.
+-- (Phase 5 checked "spent >= hard_limit", which let one long answer push past: the 267% bug.)
+if spent + cheap_estimate > hard_limit then
   return { 0, 0, 0, spent }
 end
 

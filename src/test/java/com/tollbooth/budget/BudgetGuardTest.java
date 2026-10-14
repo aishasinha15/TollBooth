@@ -47,7 +47,7 @@ class BudgetGuardTest {
             redisAvailable = false;
         }
         TollboothProperties props = new TollboothProperties(null, null,
-                new TollboothProperties.Budget(80, 120, "Asia/Kolkata"), null, null, null);
+                new TollboothProperties.Budget(80, 120, "Asia/Kolkata"), null, null, null, null);
         guard = new BudgetGuard(template, props);
     }
 
@@ -84,6 +84,51 @@ class BudgetGuardTest {
         template.opsForValue().set(key, String.valueOf(HARD_STOP));
 
         assertThat(reserveSmart(key).allowed()).isFalse();
+    }
+
+    /** Phase 7: refused when even the cheap worst case (50) would cross the hard stop. */
+    @Test
+    void refusesWhenTheWorstCaseWouldCrossTheHardStop() {
+        assumeTrue(redisAvailable, "Redis not running");
+        String key = newKey();
+        template.opsForValue().set(key, "1160");                 // 1160 + 50 > 1200
+
+        BudgetReservation r = reserveSmart(key);
+
+        assertThat(r.allowed()).isFalse();
+        assertThat(template.opsForValue().get(key)).isEqualTo("1160"); // nothing reserved
+    }
+
+    /**
+     * Phase 7: 50 questions at once, each reserving a worst case of 50, hard stop 1200.
+     * Exactly 24 fit (24 x 50 = 1200) and the counter never passes the hard stop.
+     */
+    @Test
+    void spendingNeverPassesTheHardStopUnderConcurrency() throws Exception {
+        assumeTrue(redisAvailable, "Redis not running");
+        String key = newKey();
+        ExecutorService pool = Executors.newFixedThreadPool(50);
+        CountDownLatch startSignal = new CountDownLatch(1);
+        List<Future<BudgetReservation>> results = new ArrayList<>();
+
+        for (int i = 0; i < 50; i++) {
+            results.add(pool.submit(() -> {
+                startSignal.await();
+                return guard.reserve(key, BUDGET, HARD_STOP, false, 400, 50);
+            }));
+        }
+        startSignal.countDown();
+
+        int allowed = 0;
+        for (Future<BudgetReservation> f : results) {
+            if (f.get(10, TimeUnit.SECONDS).allowed()) {
+                allowed++;
+            }
+        }
+        pool.shutdown();
+
+        assertThat(allowed).isEqualTo(24);
+        assertThat(Long.parseLong(template.opsForValue().get(key))).isLessThanOrEqualTo(HARD_STOP);
     }
 
     @Test

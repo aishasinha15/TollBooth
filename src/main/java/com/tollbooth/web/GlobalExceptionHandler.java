@@ -1,5 +1,7 @@
 package com.tollbooth.web;
 
+import com.tollbooth.admin.ConflictException;
+import com.tollbooth.admin.NotFoundException;
 import com.tollbooth.ai.AiProviderException;
 import com.tollbooth.budget.BudgetExhaustedException;
 import com.tollbooth.ratelimit.RateLimitExceededException;
@@ -64,6 +66,18 @@ public class GlobalExceptionHandler {
     public ProblemDetail handleBudget(BudgetExhaustedException ex) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.SERVICE_UNAVAILABLE,
                 "This app's daily AI budget is used up. It resets at midnight.");
+    }
+
+    /** An app or key id that doesn't exist (admin API). */
+    @ExceptionHandler(NotFoundException.class)
+    public ProblemDetail handleNotFound(NotFoundException ex) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, ex.getMessage());
+    }
+
+    /** E.g. an app name that is already taken (admin API). */
+    @ExceptionHandler(ConflictException.class)
+    public ProblemDetail handleConflict(ConflictException ex) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());
     }
 
     /** The AI provider failed (timeout, rate limit, blocked answer...). */

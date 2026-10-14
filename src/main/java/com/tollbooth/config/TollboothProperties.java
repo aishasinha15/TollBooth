@@ -14,16 +14,18 @@ import java.util.List;
  */
 @ConfigurationProperties(prefix = "tollbooth")
 public record TollboothProperties(Ai ai, RateLimit rateLimit, Budget budget, Cache cache,
-                                  Demo demo, List<ModelConfig> models) {
+                                  Demo demo, List<ModelConfig> models, DuplicateChecker duplicateChecker) {
 
     /**
      * Settings for talking to Gemini.
      *
-     * @param cheapModel            used for EASY questions, fallbacks and when the budget runs low
-     * @param smartModel            used for HARD questions while the budget allows
-     * @param estimatedOutputTokens answer length assumed when reserving budget before a call
-     * @param embeddingModel        turns text into a list of numbers for the semantic cache
-     * @param embeddingDimensions   how many numbers per embedding (smaller = less storage)
+     * @param cheapModel          used for EASY questions, fallbacks and when the budget runs low
+     * @param smartModel          used for HARD questions while the budget allows
+     * @param maxOutputTokens     longest answer the AI may give (thinking included). The budget
+     *                            reserves this worst case, so it can never be overshot (Phase 7)
+     * @param embeddingModel      turns text into a list of numbers for the semantic cache
+     * @param embeddingDimensions how many numbers per embedding (smaller = less storage)
+     * @param retryDelayMs        wait before asking a busy model once more (Phase 7)
      */
     public record Ai(String baseUrl,
                      String apiKey,
@@ -32,9 +34,10 @@ public record TollboothProperties(Ai ai, RateLimit rateLimit, Budget budget, Cac
                      String systemPrompt,
                      int connectTimeoutMs,
                      int readTimeoutMs,
-                     int estimatedOutputTokens,
+                     int maxOutputTokens,
                      String embeddingModel,
-                     int embeddingDimensions) {
+                     int embeddingDimensions,
+                     long retryDelayMs) {
     }
 
     /** Token bucket sizes per user tier. */
@@ -60,12 +63,29 @@ public record TollboothProperties(Ai ai, RateLimit rateLimit, Budget budget, Cac
      * @param enabled            turn the whole cache on or off
      * @param ttl                how long a saved answer stays valid, e.g. 24h
      * @param semanticThreshold   below this similarity: not the same question (miss)
-     * @param autoAcceptThreshold at or above this: reuse straight away (near-identical wording).
-     *                            In between ("grey zone"): the cheap model confirms YES/NO first.
+     * @param autoAcceptThreshold at or above this: reuse without a check. Phase 7 measurement showed
+     *                            no value is safe, so it is set high enough (0.99) to switch it off.
      * @param maxSemanticEntries  how many recent questions per app the semantic cache compares against
+     * @param judge               who confirms a similar question needs the same answer:
+     *                            "duplicate-model" (free, local) or "gemini" (YES/NO from the cheap model)
+     * @param duplicateThreshold  duplicate-model score (0 to 1) needed to count as "same answer"
+     * @param rerankTopK          how many of the most similar cached questions the judge looks at
+     *                            (only when the judge is free; the Gemini judge looks at 1)
+     * @param checkEasyQuestions  let the paid Gemini judge check EASY questions too. Measured in Phase 7:
+     *                            about 6 in 10 checks say YES, and a check costs about 1/40 of a cheap answer
      */
     public record Cache(boolean enabled, Duration ttl, double semanticThreshold, double autoAcceptThreshold,
-                        int maxSemanticEntries) {
+                        int maxSemanticEntries, String judge, double duplicateThreshold, int rerankTopK,
+                        boolean checkEasyQuestions) {
+    }
+
+    /**
+     * The duplicate-question model container (Phase 7), see duplicate-checker/ and docker-compose.yml.
+     *
+     * @param baseUrl   where it listens, e.g. http://localhost:8001
+     * @param timeoutMs give up after this long (then the cache counts it as a miss)
+     */
+    public record DuplicateChecker(String baseUrl, int timeoutMs) {
     }
 
     public record Demo(String appName, String apiKey, BigDecimal dailyBudgetUsd) {

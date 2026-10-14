@@ -9,4 +9,6 @@ import java.util.Optional;
 public interface ClientAppRepository extends JpaRepository<ClientApp, Long> {
 
     Optional<ClientApp> findByName(String name);
+
+    boolean existsByNameIgnoreCase(String name);
 }

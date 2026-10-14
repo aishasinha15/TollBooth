@@ -4,22 +4,22 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tollbooth.ai.AiClient;
 import com.tollbooth.ai.AiProviderException;
-import com.tollbooth.ai.AiResult;
 import com.tollbooth.config.TollboothProperties;
 import com.tollbooth.domain.CacheResult;
-import com.tollbooth.service.CostCalculator;
 import com.tollbooth.util.Hashing;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.time.Duration;
-import java.util.Locale;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 /**
@@ -29,25 +29,19 @@ import java.util.Set;
  *   "What is your return policy ?" and "what is your return policy" share one entry.
  *   Redis key: tb:cache:exact:{appId}:{sha256}
  *
- * Level 2, SEMANTIC: same meaning, different words.
- *   Each saved question also stores its embedding. A new question is embedded and
- *   compared (cosine similarity) with the app's most recent saved questions. For the best match:
- *     similarity >= auto-accept-threshold  -> reuse straight away
- *     similarity in the grey zone          -> the cheap model answers YES/NO "same question?" first,
- *                                             but only for HARD questions (expensive answers); for EASY
- *                                             ones the check would cost more than it saves, so: miss
- *     similarity < semantic-threshold      -> miss
- *   Why the grey zone: similarity alone can't separate some pairs. In testing, "exchange policy"
- *   scored 0.925 against "return policy" (needs a different answer), while
- *   "can I send back an item" scored 0.914 (same answer). No single cut-off gets both right.
+ * Level 2, SAME MEANING, in two steps ("retrieve, then verify"):
+ *   1. Retrieve: embed the new question and compare it (cosine similarity) with the app's most
+ *      recent saved questions. Keep those scoring at least semantic-threshold, most similar first.
+ *   2. Verify: a judge looks closely at the top few and decides if one really needs the same answer.
+ *      The local duplicate model is free, so it checks every question. The Gemini judge costs a
+ *      little, so it only checks HARD questions (whose answers are expensive enough to be worth it).
+ *   Why step 2 exists: Phase 7 measured 50 labelled pairs. Questions with one detail changed
+ *   ("3-day" vs "5-day" Goa trip, 0.975) scored HIGHER than real paraphrases (0.873).
+ *   Similarity alone can't tell them apart, at any threshold.
  *   Redis keys: tb:cache:sem:{appId}:{sha256}  (the entry, with its embedding)
  *               tb:cache:semidx:{appId}        (sorted set of entries, newest first)
  *
- * Scale note: comparing against up to max-semantic-entries (500) in Java is fast
- * (well under a millisecond of maths). Beyond that, a Redis vector index (HNSW)
- * would find the nearest match without checking every entry.
- *
- * Any Redis or embedding failure is treated as a miss: the cache must never break answering.
+ * Any Redis, embedding or judge failure is treated as a miss: the cache must never break answering.
  */
 @Component
 public class AnswerCache {
@@ -57,32 +51,48 @@ public class AnswerCache {
     private final StringRedisTemplate redis;
     private final ObjectMapper json;
     private final AiClient aiClient;
-    private final CostCalculator costCalculator;
+    private final QuestionJudge judge;
     private final TollboothProperties.Cache settings;
-    private final String judgeModel;
 
+    /** Used by Spring: picks the judge named in application.yml (tollbooth.cache.judge). */
+    @Autowired
     public AnswerCache(StringRedisTemplate redis, ObjectMapper json, AiClient aiClient,
-                       CostCalculator costCalculator, TollboothProperties props) {
+                       DuplicateModelJudge duplicateModel, GeminiQuestionJudge gemini,
+                       TollboothProperties props) {
+        this(redis, json, aiClient, "gemini".equalsIgnoreCase(props.cache().judge()) ? gemini : duplicateModel, props);
+    }
+
+    /** Used by tests, which pass in a fake judge. */
+    AnswerCache(StringRedisTemplate redis, ObjectMapper json, AiClient aiClient,
+                QuestionJudge judge, TollboothProperties props) {
         this.redis = redis;
         this.json = json;
         this.aiClient = aiClient;
-        this.costCalculator = costCalculator;
+        this.judge = judge;
         this.settings = props.cache();
-        this.judgeModel = props.ai().cheapModel();
+        log.info("Answer cache judge: {}", judge.name());
+    }
+
+    /** True if checks cost nothing, so AskService can allow them for every question. */
+    public boolean checksAreFree() {
+        return judge.free();
     }
 
     // ------------------------------------------------------------------ lookup
 
-    /** Lookup with the grey-zone check allowed. */
+    /** Lookup with the check allowed. */
     public CacheLookup lookup(Long appId, String question) {
         return lookup(appId, question, true);
     }
 
+    /** A saved question and how similar it is to the new one. */
+    private record Candidate(CachedAnswer answer, double similarity) {
+    }
+
     /**
-     * @param allowCheck whether a grey-zone match may be verified with the cheap model.
-     *                   The caller passes false when a fresh answer would be cheap anyway
-     *                   (an EASY question): the check costs about a quarter of a short answer,
-     *                   so it only pays off when the answer it might save is expensive.
+     * @param allowCheck whether a similar match may be verified by the judge. AskService passes
+     *                   false for EASY questions when the judge costs money (Gemini): the check
+     *                   would cost about a quarter of the cheap answer it might save.
      */
     public CacheLookup lookup(Long appId, String question, boolean allowCheck) {
         String normalized = QuestionNormalizer.normalize(question);
@@ -94,81 +104,106 @@ public class AnswerCache {
             return new CacheLookup(CacheResult.HIT_EXACT, exact, 1.0, null, "exact match", BigDecimal.ZERO);
         }
 
-        // Level 2: semantic match (one embedding call + comparison)
+        // Level 2, step 1: retrieve look-alikes with embeddings
         float[] embedding = embedSafely(normalized);
         if (embedding == null) {
             return CacheLookup.miss(null);
         }
+        List<Candidate> candidates;
         try {
-            String index = semanticIndexKey(appId);
-            Set<String> recent = redis.opsForZSet().reverseRange(index, 0, settings.maxSemanticEntries() - 1);
-            if (recent == null || recent.isEmpty()) {
-                return CacheLookup.miss(embedding);
-            }
-            List<String> members = new ArrayList<>(recent);
-            List<String> keys = members.stream().map(h -> semanticKey(appId, h)).toList();
-            List<String> values = redis.opsForValue().multiGet(keys);
-
-            CachedAnswer best = null;
-            double bestScore = -1;
-            for (int i = 0; i < members.size(); i++) {
-                String value = values == null ? null : values.get(i);
-                if (value == null) {
-                    redis.opsForZSet().remove(index, members.get(i)); // entry expired: tidy the index
-                    continue;
-                }
-                CachedAnswer candidate = parse(value);
-                if (candidate == null || candidate.embedding() == null) {
-                    continue;
-                }
-                double score = Vectors.cosine(embedding, Vectors.fromBase64(candidate.embedding()));
-                if (score > bestScore) {
-                    bestScore = score;
-                    best = candidate;
-                }
-            }
-
-            if (best == null || bestScore < settings.semanticThreshold()) {
-                if (best != null) {
-                    log.info("Semantic cache miss: best similarity {} to \"{}\" (below {})",
-                            fmt(bestScore), best.question(), settings.semanticThreshold());
-                }
-                return CacheLookup.miss(embedding);
-            }
-
-            if (bestScore >= settings.autoAcceptThreshold()) {
-                return new CacheLookup(CacheResult.HIT_SEMANTIC, best, bestScore, embedding,
-                        "near-identical, auto-accepted", BigDecimal.ZERO);
-            }
-
-            // Grey zone, but a fresh answer is cheap: checking would cost more than it could save
-            if (!allowCheck) {
-                log.info("Semantic cache grey zone: similarity {} to \"{}\", check skipped (easy question)",
-                        fmt(bestScore), best.question());
-                return new CacheLookup(CacheResult.MISS, null, bestScore, embedding,
-                        String.format("similar to \"%s\" (%s), check skipped: a fresh easy answer is cheaper",
-                                best.question(), fmt(bestScore)),
-                        BigDecimal.ZERO);
-            }
-
-            // Grey zone: similar topic, but is it really the same question? Ask the cheap model.
-            Judgement verdict = judge(normalized, best.question());
-            if (verdict.same()) {
-                log.info("Semantic cache grey zone: similarity {} to \"{}\", judged SAME",
-                        fmt(bestScore), best.question());
-                return new CacheLookup(CacheResult.HIT_SEMANTIC, best, bestScore, embedding,
-                        "confirmed by " + judgeModel, verdict.cost());
-            }
-            log.info("Semantic cache grey zone: similarity {} to \"{}\", judged DIFFERENT",
-                    fmt(bestScore), best.question());
-            return new CacheLookup(CacheResult.MISS, null, bestScore, embedding,
-                    String.format("similar to \"%s\" (%s) but judged a different question by %s",
-                            best.question(), fmt(bestScore), judgeModel),
-                    verdict.cost());
+            candidates = similarCandidates(appId, embedding, normalized);
         } catch (DataAccessException e) {
             log.warn("Semantic cache lookup failed, treating as miss: {}", e.getMessage());
             return CacheLookup.miss(embedding);
         }
+        if (candidates.isEmpty()) {
+            return CacheLookup.miss(embedding);
+        }
+        Candidate top = candidates.get(0);
+
+        if (top.similarity() >= settings.autoAcceptThreshold()) {
+            return new CacheLookup(CacheResult.HIT_SEMANTIC, top.answer(), top.similarity(), embedding,
+                    "near-identical, auto-accepted", BigDecimal.ZERO);
+        }
+
+        if (!allowCheck) {
+            log.info("Semantic cache: similarity {} to \"{}\", check skipped (easy question)",
+                    fmt(top.similarity()), top.answer().question());
+            return new CacheLookup(CacheResult.MISS, null, top.similarity(), embedding,
+                    String.format("similar to \"%s\" (%s), check skipped: a fresh easy answer is cheaper",
+                            top.answer().question(), fmt(top.similarity())),
+                    BigDecimal.ZERO);
+        }
+
+        // Level 2, step 2: verify. A free judge looks at the top few, a paid one only at the best.
+        int k = judge.free() ? Math.max(1, settings.rerankTopK()) : 1;
+        List<Candidate> shortlist = candidates.subList(0, Math.min(k, candidates.size()));
+        List<SameAnswerCheck> verdicts = judge.judgeAll(normalized,
+                shortlist.stream().map(c -> c.answer().question()).toList());
+        BigDecimal cost = verdicts.stream().map(SameAnswerCheck::cost).reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        for (int i = 0; i < shortlist.size() && i < verdicts.size(); i++) {
+            SameAnswerCheck v = verdicts.get(i);
+            if (v.same()) {
+                Candidate match = shortlist.get(i);
+                String note = "confirmed by " + judge.name()
+                        + (judge.free() ? " (score " + fmt2(v.score()) + ")" : "")
+                        + (i > 0 ? ", match " + (i + 1) + " of " + shortlist.size() + " checked" : "");
+                log.info("Semantic cache: similarity {} to \"{}\", {}", fmt(match.similarity()),
+                        match.answer().question(), note);
+                return new CacheLookup(CacheResult.HIT_SEMANTIC, match.answer(), match.similarity(), embedding,
+                        note, cost);
+            }
+        }
+
+        boolean allFailed = verdicts.stream().allMatch(SameAnswerCheck::failed);
+        String note = allFailed
+                ? String.format("similar to \"%s\" (%s) but the %s check failed, answered fresh to be safe",
+                        top.answer().question(), fmt(top.similarity()), judge.name())
+                : String.format("similar to \"%s\" (%s) but judged a different question by %s%s",
+                        top.answer().question(), fmt(top.similarity()), judge.name(),
+                        judge.free() ? " (score " + fmt2(verdicts.get(0).score()) + ")" : "");
+        log.info("Semantic cache miss: {}", note);
+        return new CacheLookup(CacheResult.MISS, null, top.similarity(), embedding, note, cost);
+    }
+
+    /** Saved questions at or above semantic-threshold, most similar first. */
+    private List<Candidate> similarCandidates(Long appId, float[] embedding, String normalized) {
+        String index = semanticIndexKey(appId);
+        Set<String> recent = redis.opsForZSet().reverseRange(index, 0, settings.maxSemanticEntries() - 1);
+        if (recent == null || recent.isEmpty()) {
+            return List.of();
+        }
+        List<String> members = new ArrayList<>(recent);
+        List<String> keys = members.stream().map(h -> semanticKey(appId, h)).toList();
+        List<String> values = redis.opsForValue().multiGet(keys);
+
+        List<Candidate> candidates = new ArrayList<>();
+        Candidate best = null;
+        for (int i = 0; i < members.size(); i++) {
+            String value = values == null ? null : values.get(i);
+            if (value == null) {
+                redis.opsForZSet().remove(index, members.get(i)); // entry expired: tidy the index
+                continue;
+            }
+            CachedAnswer saved = parse(value);
+            if (saved == null || saved.embedding() == null) {
+                continue;
+            }
+            Candidate c = new Candidate(saved, Vectors.cosine(embedding, Vectors.fromBase64(saved.embedding())));
+            if (best == null || c.similarity() > best.similarity()) {
+                best = c;
+            }
+            if (c.similarity() >= settings.semanticThreshold()) {
+                candidates.add(c);
+            }
+        }
+        if (candidates.isEmpty() && best != null) {
+            log.info("Semantic cache miss: best similarity {} to \"{}\" (below {})",
+                    fmt(best.similarity()), best.answer().question(), settings.semanticThreshold());
+        }
+        candidates.sort(Comparator.comparingDouble(Candidate::similarity).reversed());
+        return candidates;
     }
 
     // ------------------------------------------------------------------ save
@@ -209,7 +244,7 @@ public class AnswerCache {
 
     /**
      * After a semantic hit, remember the new wording as an EXACT entry pointing to the same answer,
-     * so the next person who types it gets an instant exact hit (no embedding, no YES/NO check).
+     * so the next person who types it gets an instant exact hit (no embedding, no check).
      */
     public void rememberWording(Long appId, String question, CachedAnswer answer) {
         String normalized = QuestionNormalizer.normalize(question);
@@ -235,34 +270,12 @@ public class AnswerCache {
         return "tb:cache:semidx:" + appId;
     }
 
-    /** The grey-zone check's answer and what it cost. */
-    private record Judgement(boolean same, BigDecimal cost) {
-    }
-
-    /**
-     * Asks the cheap model a tiny YES/NO question (a few dozen tokens, about a tenth of a normal answer).
-     * The question is phrased around the ANSWER, not the topic: "exchange policy" and "return policy"
-     * share a topic but need different answers. Any failure counts as "different": never risk a wrong hit.
-     */
-    private Judgement judge(String newQuestion, String cachedQuestion) {
-        String prompt = "Two customer questions sent to a shopping or travel app's assistant:\n"
-                + "A: \"" + newQuestion + "\"\n"
-                + "B: \"" + cachedQuestion + "\"\n"
-                + "Would one correct answer fully and accurately answer BOTH questions? "
-                + "Reply with only YES or NO.";
-        try {
-            AiResult result = aiClient.generate(judgeModel, prompt);
-            BigDecimal cost = costCalculator.cost(judgeModel, result.inputTokens(), result.outputTokens());
-            String reply = result.text() == null ? "" : result.text().trim().toUpperCase(Locale.ROOT);
-            return new Judgement(reply.startsWith("YES"), cost);
-        } catch (AiProviderException e) {
-            log.warn("Grey-zone check failed, treating as different: {}", e.getMessage());
-            return new Judgement(false, BigDecimal.ZERO);
-        }
-    }
-
     private static String fmt(double similarity) {
         return String.format(Locale.ROOT, "%.3f", similarity);
+    }
+
+    private static String fmt2(double score) {
+        return String.format(Locale.ROOT, "%.2f", score);
     }
 
     private float[] embedSafely(String text) {

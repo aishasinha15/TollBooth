@@ -1,0 +1,4 @@
+sentence-transformers==3.3.1
+transformers==4.46.3
+fastapi==0.115.6
+uvicorn==0.32.1

@@ -1,5 +1,7 @@
 package com.tollbooth.ai;
 
+import java.util.List;
+
 /**
  * Anything that can answer a question with an AI model.
  *
@@ -20,4 +22,13 @@ public interface AiClient {
      * Questions that mean the same thing get similar numbers (used by the semantic cache).
      */
     float[] embed(String text);
+
+    /**
+     * Embeds many texts, in the same order (Phase 7: used by the threshold measurement).
+     * A "default" method: implementations get this simple version for free and may
+     * override it with something faster (GeminiClient sends one batch request).
+     */
+    default List<float[]> embedAll(List<String> texts) {
+        return texts.stream().map(this::embed).toList();
+    }
 }

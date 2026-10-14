@@ -31,7 +31,9 @@ import static org.mockito.Mockito.mock;
  * similar questions are, and the grey-zone YES/NO check answers from a fixed list.
  * No Gemini calls, no cost. Each test uses a random app id, so tests never share entries.
  *
- * Thresholds: below 0.88 miss, 0.88 to 0.97 grey zone (checked), 0.97 and up auto-accepted.
+ * Thresholds: below 0.88 miss, 0.88 to 0.97 checked by the judge, 0.97 and up auto-accepted.
+ * Most tests use the Gemini judge (with the fake AI); one uses a fake FREE judge to test
+ * that a free judge looks past the most similar question ("rerank").
  */
 class AnswerCacheTest {
 
@@ -40,6 +42,7 @@ class AnswerCacheTest {
             "can i send back shoes that don t fit", new float[]{0.98f, 0.15f, 0.02f}, // 0.998: auto-accept
             "tell me your return policy", new float[]{1.0f, 0.10f, 0.38f},             // 0.935: grey zone, same
             "what is your exchange policy", new float[]{1.0f, 0.10f, 0.40f},           // 0.929: grey zone, different
+            "can i send back my item", new float[]{1.0f, -0.25f, 0.30f},             // 0.904 to return, 0.943 to exchange
             "how do i cancel my order", new float[]{0.2f, 1.0f, 0.0f},                 // 0.29: miss
             "what are your delivery charges", new float[]{0.0f, 0.0f, 1.0f});
 
@@ -77,6 +80,27 @@ class AnswerCacheTest {
     private static LettuceConnectionFactory connectionFactory;
     private static boolean redisAvailable;
     private static AnswerCache cache;
+    private static AnswerCache freeJudgeCache;
+
+    /** A free judge (like the duplicate model) that only knows "send back my item" = "return policy". */
+    private static final QuestionJudge FREE_FAKE_JUDGE = new QuestionJudge() {
+        @Override
+        public String name() {
+            return "fake duplicate model";
+        }
+
+        @Override
+        public boolean free() {
+            return true;
+        }
+
+        @Override
+        public SameAnswerCheck judge(String newQuestion, String cachedQuestion) {
+            boolean same = newQuestion.equals("can i send back my item")
+                    && cachedQuestion.equals("what is your return policy");
+            return new SameAnswerCheck(same, false, same ? 0.95 : 0.05, java.math.BigDecimal.ZERO);
+        }
+    };
 
     @BeforeAll
     static void connect() {
@@ -91,13 +115,15 @@ class AnswerCacheTest {
             redisAvailable = false;
         }
         TollboothProperties.Ai ai = new TollboothProperties.Ai(
-                null, null, "cheap-model", "smart-model", null, 0, 0, 0, null, 0);
+                null, null, "cheap-model", "smart-model", null, 0, 0, 0, null, 0, 0);
         TollboothProperties.Cache settings = new TollboothProperties.Cache(
-                true, Duration.ofMinutes(5), 0.88, 0.97, 500);
-        TollboothProperties props = new TollboothProperties(ai, null, null, settings, null, null);
+                true, Duration.ofMinutes(5), 0.88, 0.97, 500, "gemini", 0.5, 3, false);
+        TollboothProperties props = new TollboothProperties(ai, null, null, settings, null, null, null);
         // A mocked price list returns no prices, so check costs are 0 here (cost maths has its own tests)
         CostCalculator costs = new CostCalculator(mock(ModelPriceRepository.class));
-        cache = new AnswerCache(template, new ObjectMapper(), FAKE_AI, costs, props);
+        cache = new AnswerCache(template, new ObjectMapper(), FAKE_AI,
+                new GeminiQuestionJudge(FAKE_AI, costs, props), props);
+        freeJudgeCache = new AnswerCache(template, new ObjectMapper(), FAKE_AI, FREE_FAKE_JUDGE, props);
     }
 
     @AfterAll
@@ -230,5 +256,24 @@ class AnswerCacheTest {
 
         assertThat(cache.lookup(app, "do you ship to nepal").result()).isEqualTo(CacheResult.HIT_EXACT);
         assertThat(cache.lookup(app, "Do you deliver in Nepal?").result()).isEqualTo(CacheResult.MISS);
+    }
+
+    /**
+     * Rerank: the MOST similar saved question (exchange, 0.943) needs a different answer,
+     * the second (return, 0.904) the same one. A free judge checks both and picks the right one.
+     */
+    @Test
+    void freeJudgeLooksPastTheMostSimilarQuestion() {
+        assumeTrue(redisAvailable, "Redis not running");
+        Long app = newAppId();
+        freeJudgeCache.save(app, "What is your return policy?", "30 days.", "cheap-model", null);
+        freeJudgeCache.save(app, "What is your exchange policy?", "Exchange within 15 days.", "cheap-model", null);
+
+        CacheLookup hit = freeJudgeCache.lookup(app, "Can I send back my item?");
+
+        assertThat(hit.result()).isEqualTo(CacheResult.HIT_SEMANTIC);
+        assertThat(hit.answer().answer()).isEqualTo("30 days.");
+        assertThat(hit.note()).contains("match 2 of 2 checked");
+        assertThat(hit.checkCost()).isZero();
     }
 }

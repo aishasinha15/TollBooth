@@ -1,4 +1,4 @@
-# Starts the two things Tollbooth depends on.
+# Starts MySQL and Redis, the two things Tollbooth depends on.
 # Run:   docker compose up -d
 # Stop:  docker compose down
 services:
@@ -21,6 +21,16 @@ services:
     container_name: tollbooth-redis
     ports:
       - "6379:6379"
+
+  # Phase 7 EXPERIMENT: open-source duplicate-question model. Measured at 46% accuracy on our pairs,
+  # so it is off by default. Start it only to re-run the comparison:
+  #   docker compose --profile experiments up -d --build
+  duplicate-checker:
+    profiles: ["experiments"]
+    build: ./duplicate-checker
+    container_name: tollbooth-duplicate-checker
+    ports:
+      - "8001:8000"
 
 volumes:
   mysqldata:

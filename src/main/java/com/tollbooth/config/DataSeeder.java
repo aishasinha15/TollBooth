@@ -1,5 +1,6 @@
 package com.tollbooth.config;
 
+import com.tollbooth.admin.ApiKeyGenerator;
 import com.tollbooth.domain.ApiKey;
 import com.tollbooth.domain.ClientApp;
 import com.tollbooth.domain.ModelPrice;
@@ -51,7 +52,7 @@ public class DataSeeder implements CommandLineRunner {
 
         String keyHash = Hashing.sha256Hex(demo.apiKey());
         if (!apiKeys.existsByKeyHash(keyHash)) {
-            apiKeys.save(new ApiKey(keyHash, app));
+            apiKeys.save(new ApiKey(keyHash, ApiKeyGenerator.prefixOf(demo.apiKey()), app));
         }
 
         // Upsert prices so changing application.yml updates them on the next start

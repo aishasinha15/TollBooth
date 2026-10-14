@@ -1,0 +1,302 @@
+[
+  {
+    "a": "What is your return policy?",
+    "b": "Can I send back an item I bought?",
+    "sameAnswer": true,
+    "note": "shopping"
+  },
+  {
+    "a": "What is your return policy?",
+    "b": "How many days do I have to return a product?",
+    "sameAnswer": true,
+    "note": "shopping"
+  },
+  {
+    "a": "What is your return policy?",
+    "b": "Can I return shoes that don't fit?",
+    "sameAnswer": true,
+    "note": "shopping"
+  },
+  {
+    "a": "How long does delivery take?",
+    "b": "When will my order arrive after I place it?",
+    "sameAnswer": true,
+    "note": "shopping"
+  },
+  {
+    "a": "Do you offer cash on delivery?",
+    "b": "Can I pay cash when my order arrives?",
+    "sameAnswer": true,
+    "note": "shopping"
+  },
+  {
+    "a": "What are your delivery charges?",
+    "b": "How much do you charge for shipping?",
+    "sameAnswer": true,
+    "note": "shopping"
+  },
+  {
+    "a": "Is there free delivery?",
+    "b": "Do you deliver for free on large orders?",
+    "sameAnswer": true,
+    "note": "shopping"
+  },
+  {
+    "a": "How do I track my order?",
+    "b": "Where can I see my order status?",
+    "sameAnswer": true,
+    "note": "shopping"
+  },
+  {
+    "a": "How do I cancel my order?",
+    "b": "What are the steps to cancel an order I placed?",
+    "sameAnswer": true,
+    "note": "shopping"
+  },
+  {
+    "a": "How long does a refund take?",
+    "b": "When will I get my money back after a return?",
+    "sameAnswer": true,
+    "note": "shopping"
+  },
+  {
+    "a": "How do I change my delivery address?",
+    "b": "Can I update the shipping address on my order?",
+    "sameAnswer": true,
+    "note": "shopping"
+  },
+  {
+    "a": "What payment methods do you accept?",
+    "b": "Which ways can I pay?",
+    "sameAnswer": true,
+    "note": "shopping"
+  },
+  {
+    "a": "Can I pay with UPI?",
+    "b": "Do you accept UPI payments?",
+    "sameAnswer": true,
+    "note": "shopping"
+  },
+  {
+    "a": "How do I apply a coupon code?",
+    "b": "Where do I enter a promo code at checkout?",
+    "sameAnswer": true,
+    "note": "shopping"
+  },
+  {
+    "a": "How do I reset my password?",
+    "b": "I forgot my password, how do I get a new one?",
+    "sameAnswer": true,
+    "note": "account"
+  },
+  {
+    "a": "How do I contact customer support?",
+    "b": "How can I reach your help desk?",
+    "sameAnswer": true,
+    "note": "account"
+  },
+  {
+    "a": "What is the baggage allowance on domestic flights?",
+    "b": "How many kg of luggage can I carry on a domestic flight?",
+    "sameAnswer": true,
+    "note": "travel"
+  },
+  {
+    "a": "Can I cancel my flight booking?",
+    "b": "Is it possible to cancel a flight ticket I booked?",
+    "sameAnswer": true,
+    "note": "travel"
+  },
+  {
+    "a": "What time is hotel check-in?",
+    "b": "When can I check in to my hotel?",
+    "sameAnswer": true,
+    "note": "travel"
+  },
+  {
+    "a": "How do I web check-in for my flight?",
+    "b": "Where can I do online check-in before my flight?",
+    "sameAnswer": true,
+    "note": "travel"
+  },
+  {
+    "a": "What is the minimum order value for delivery?",
+    "b": "Is there a minimum amount to place a food order?",
+    "sameAnswer": true,
+    "note": "food"
+  },
+  {
+    "a": "Can I schedule a food order for later?",
+    "b": "Can I place an order now and get it delivered at a set time later?",
+    "sameAnswer": true,
+    "note": "food"
+  },
+  {
+    "a": "Plan a 3-day trip to Goa for 2 people under ₹20,000",
+    "b": "Make a 3-day Goa itinerary for two with a budget of ₹20,000",
+    "sameAnswer": true,
+    "note": "travel, hard"
+  },
+  {
+    "a": "Compare the Nike Pegasus and Adidas Ultraboost for running",
+    "b": "Which is better for running, Nike Pegasus or Adidas Ultraboost?",
+    "sameAnswer": true,
+    "note": "shopping, hard"
+  },
+  {
+    "a": "Suggest a gift for my father under ₹2,000",
+    "b": "What can I buy my dad as a present for less than ₹2,000?",
+    "sameAnswer": true,
+    "note": "shopping, hard"
+  },
+  {
+    "a": "What is your return policy?",
+    "b": "What is your exchange policy?",
+    "sameAnswer": false,
+    "note": "return vs exchange"
+  },
+  {
+    "a": "What is your return policy?",
+    "b": "What is your refund policy?",
+    "sameAnswer": false,
+    "note": "return vs refund"
+  },
+  {
+    "a": "How do I cancel my order?",
+    "b": "How do I place an order?",
+    "sameAnswer": false,
+    "note": "cancel vs place"
+  },
+  {
+    "a": "How do I cancel my order?",
+    "b": "Can I cancel my subscription?",
+    "sameAnswer": false,
+    "note": "order vs subscription"
+  },
+  {
+    "a": "How long does a refund take?",
+    "b": "How do I get my refund in my bank account instead of the wallet?",
+    "sameAnswer": false,
+    "note": "refund time vs refund method"
+  },
+  {
+    "a": "How long does delivery take?",
+    "b": "How much does delivery cost?",
+    "sameAnswer": false,
+    "note": "time vs cost"
+  },
+  {
+    "a": "Do you offer cash on delivery?",
+    "b": "Do you offer EMI on credit cards?",
+    "sameAnswer": false,
+    "note": "payment options"
+  },
+  {
+    "a": "Can I pay with UPI?",
+    "b": "Can I get a refund to UPI?",
+    "sameAnswer": false,
+    "note": "pay vs refund"
+  },
+  {
+    "a": "What are your delivery charges?",
+    "b": "What are your return shipping charges?",
+    "sameAnswer": false,
+    "note": "delivery vs return charges"
+  },
+  {
+    "a": "How do I track my order?",
+    "b": "How do I track my refund?",
+    "sameAnswer": false,
+    "note": "order vs refund"
+  },
+  {
+    "a": "How do I change my delivery address?",
+    "b": "How do I change the phone number on my account?",
+    "sameAnswer": false,
+    "note": "address vs phone"
+  },
+  {
+    "a": "How do I apply a coupon code?",
+    "b": "Why is my coupon code not working?",
+    "sameAnswer": false,
+    "note": "how-to vs problem"
+  },
+  {
+    "a": "How do I reset my password?",
+    "b": "How do I delete my account?",
+    "sameAnswer": false,
+    "note": "account actions"
+  },
+  {
+    "a": "How do I contact customer support?",
+    "b": "How do I contact the restaurant directly?",
+    "sameAnswer": false,
+    "note": "support vs restaurant"
+  },
+  {
+    "a": "Is there free delivery?",
+    "b": "Is there free return pickup?",
+    "sameAnswer": false,
+    "note": "delivery vs return"
+  },
+  {
+    "a": "What is the baggage allowance on domestic flights?",
+    "b": "What is the baggage allowance on international flights?",
+    "sameAnswer": false,
+    "note": "domestic vs international"
+  },
+  {
+    "a": "Can I cancel my flight booking?",
+    "b": "Can I cancel my hotel booking?",
+    "sameAnswer": false,
+    "note": "flight vs hotel"
+  },
+  {
+    "a": "What time is hotel check-in?",
+    "b": "What time is hotel check-out?",
+    "sameAnswer": false,
+    "note": "check-in vs check-out"
+  },
+  {
+    "a": "How do I web check-in for my flight?",
+    "b": "How do I select a seat on my flight?",
+    "sameAnswer": false,
+    "note": "check-in vs seat"
+  },
+  {
+    "a": "What is the minimum order value for delivery?",
+    "b": "What is the maximum order value for cash on delivery?",
+    "sameAnswer": false,
+    "note": "minimum vs maximum"
+  },
+  {
+    "a": "Can I schedule a food order for later?",
+    "b": "Can I add items to an order I already placed?",
+    "sameAnswer": false,
+    "note": "schedule vs edit"
+  },
+  {
+    "a": "Plan a 3-day trip to Goa for 2 people under ₹20,000",
+    "b": "Plan a 5-day trip to Goa for 2 people under ₹20,000",
+    "sameAnswer": false,
+    "note": "3 vs 5 days"
+  },
+  {
+    "a": "Plan a 3-day trip to Goa for 2 people under ₹20,000",
+    "b": "Plan a 3-day trip to Manali for 2 people under ₹20,000",
+    "sameAnswer": false,
+    "note": "Goa vs Manali"
+  },
+  {
+    "a": "Compare the Nike Pegasus and Adidas Ultraboost for running",
+    "b": "Compare the Nike Pegasus and Asics Novablast for running",
+    "sameAnswer": false,
+    "note": "different shoes"
+  },
+  {
+    "a": "Suggest a gift for my father under ₹2,000",
+    "b": "Suggest a gift for my mother under ₹2,000",
+    "sameAnswer": false,
+    "note": "father vs mother"
+  }
+]

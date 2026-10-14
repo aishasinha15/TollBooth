@@ -1,5 +1,6 @@
 package com.tollbooth.web;
 
+import com.tollbooth.ai.ResilientAiCaller;
 import com.tollbooth.repository.ClientAppRepository;
 import com.tollbooth.repository.ModelPriceRepository;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -21,13 +22,16 @@ public class StatusController {
     private final ClientAppRepository clientApps;
     private final ModelPriceRepository modelPrices;
     private final StringRedisTemplate redis;
+    private final ResilientAiCaller aiCaller;
 
     public StatusController(ClientAppRepository clientApps,
                             ModelPriceRepository modelPrices,
-                            StringRedisTemplate redis) {
+                            StringRedisTemplate redis,
+                            ResilientAiCaller aiCaller) {
         this.clientApps = clientApps;
         this.modelPrices = modelPrices;
         this.redis = redis;
+        this.aiCaller = aiCaller;
     }
 
     @GetMapping("/status")
@@ -40,7 +44,9 @@ public class StatusController {
                 "service", "tollbooth",
                 "clientApps", clientApps.count(),
                 "modelPrices", modelPrices.findAll().stream().map(p -> p.getModelName()).toList(),
-                "redis", redisValue
+                "redis", redisValue,
+                // Circuit breaker per model, e.g. {"gemini-3.6-flash": "OPEN until 21:40:05"}
+                "aiCircuits", aiCaller.circuitStates()
         );
     }
 }

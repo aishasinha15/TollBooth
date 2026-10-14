@@ -1,8 +1,7 @@
 package com.tollbooth.service;
 
-import com.tollbooth.ai.AiClient;
-import com.tollbooth.ai.AiProviderException;
 import com.tollbooth.ai.AiResult;
+import com.tollbooth.ai.ResilientAiCaller;
 import com.tollbooth.budget.BudgetExhaustedException;
 import com.tollbooth.budget.BudgetGuard;
 import com.tollbooth.budget.BudgetReservation;
@@ -35,8 +34,8 @@ import java.math.BigDecimal;
  * Flow:
  *   1 rate limit -> 2 mask private data -> 3 route (easy/hard)
  *   -> 4 cache lookup (exact, then semantic): on a hit, answer instantly for free
- *   -> 5 reserve budget (may downgrade to the cheap model, or stop at the hard limit)
- *   -> 6 call the AI (smart model falls back to cheap on failure)
+ *   -> 5 reserve the worst-case cost (may downgrade to the cheap model, or stop at the hard limit)
+ *   -> 6 call the AI (a busy model is retried once; the smart model falls back to cheap on failure)
  *   -> 7 restore private data -> 8 save to cache -> 9 settle the real cost -> 10 record the bill.
  *
  * Note: this method is NOT @Transactional. An AI call can take seconds, and
@@ -47,7 +46,7 @@ public class AskService {
 
     private static final Logger log = LoggerFactory.getLogger(AskService.class);
 
-    private final AiClient aiClient;
+    private final ResilientAiCaller aiCaller;
     private final CostCalculator costCalculator;
     private final UsageService usageService;
     private final TokenBucketRateLimiter rateLimiter;
@@ -57,10 +56,10 @@ public class AskService {
     private final AnswerCache answerCache;
     private final TollboothProperties props;
 
-    public AskService(AiClient aiClient, CostCalculator costCalculator, UsageService usageService,
+    public AskService(ResilientAiCaller aiCaller, CostCalculator costCalculator, UsageService usageService,
                       TokenBucketRateLimiter rateLimiter, PiiMasker piiMasker, DifficultyRouter router,
                       BudgetGuard budgetGuard, AnswerCache answerCache, TollboothProperties props) {
-        this.aiClient = aiClient;
+        this.aiCaller = aiCaller;
         this.costCalculator = costCalculator;
         this.usageService = usageService;
         this.rateLimiter = rateLimiter;
@@ -96,8 +95,12 @@ public class AskService {
         boolean cacheable = props.cache().enabled()
                 && request.category() == QuestionCategory.GENERAL
                 && !masked.hasPii();
-        // The grey-zone YES/NO check only pays off when the answer it might save is expensive (HARD)
-        boolean allowCheck = route.difficulty() == Difficulty.HARD;
+        // The careful same-answer check. Phase 6 limited the paid Gemini check to HARD questions
+        // (an estimate said it wasn't worth it for cheap answers). Phase 7 measured it: about 6 in 10 checks
+        // say YES and a check costs about 1/40 of a real cheap answer, so by default every question is checked.
+        boolean allowCheck = props.cache().checkEasyQuestions()
+                || answerCache.checksAreFree()
+                || route.difficulty() == Difficulty.HARD;
         CacheLookup cached = cacheable
                 ? answerCache.lookup(app.appId(), masked.maskedText(), allowCheck)
                 : CacheLookup.miss(null);
@@ -108,13 +111,14 @@ public class AskService {
             return answerFromCache(app, request, cached, route, budgetMicros, budgetKey, limit, start);
         }
 
-        // 5. Reserve an estimate from today's budget (atomic, in Redis)
+        // 5. Reserve the WORST case from today's budget (atomic, in Redis).
+        //    Phase 7: the answer length is capped, so the real cost can only be lower.
         long hardLimitMicros = budgetMicros * props.budget().hardStopPercent() / 100;
         BudgetReservation reservation = budgetGuard.reserve(
                 budgetKey, budgetMicros, hardLimitMicros,
                 route.difficulty() == Difficulty.HARD,
-                estimateMicros(smartModel, masked.maskedText()),
-                estimateMicros(cheapModel, masked.maskedText()));
+                worstCaseMicros(smartModel, masked.maskedText()),
+                worstCaseMicros(cheapModel, masked.maskedText()));
         if (!reservation.allowed()) {
             throw new BudgetExhaustedException();
         }
@@ -128,31 +132,32 @@ public class AskService {
             routeReason += "; budget almost used, downgraded to " + cheapModel;
         }
 
-        // 6. Ask the AI. If the smart model fails, try the cheap one once before giving up.
+        // 6. Ask the AI. A busy model gets one retry (Phase 7); if the smart model still fails,
+        //    the cheap one answers instead (Phase 5).
         //    On any final failure, hand the reserved budget back before passing the error on.
-        AiResult result;
+        ResilientAiCaller.Outcome call;
         try {
-            try {
-                result = aiClient.generate(model, masked.maskedText());
-            } catch (AiProviderException first) {
-                if (!model.equals(smartModel)) {
-                    throw first;
-                }
-                log.warn("{} failed ({}), falling back to {}", smartModel, first.getMessage(), cheapModel);
-                model = cheapModel;
-                routeReason += "; " + smartModel + " failed (" + first.getMessage() + "), fell back to " + cheapModel;
-                result = aiClient.generate(model, masked.maskedText());
-            }
+            String fallback = model.equals(smartModel) ? cheapModel : null;
+            call = aiCaller.call(model, fallback, masked.maskedText());
         } catch (RuntimeException failure) {
             budgetGuard.release(reservation);
             throw failure;
+        }
+        AiResult result = call.result();
+        model = call.model();
+        if (!call.notes().isEmpty()) {
+            routeReason += "; " + call.notes();
+        }
+        if (result.truncated()) {
+            routeReason += "; answer cut at " + props.ai().maxOutputTokens() + " tokens";
         }
 
         // 7. Put the real values back so the user sees a normal answer
         String answer = masked.restore(result.text());
 
-        // 8. Save for next time (reusing the embedding computed during lookup)
-        if (cacheable) {
+        // 8. Save for next time (reusing the embedding computed during lookup).
+        //    A cut-off answer is never cached: nobody else should get half an answer.
+        if (cacheable && !result.truncated()) {
             answerCache.save(app.appId(), masked.maskedText(), answer, model, cached.embedding());
         }
 
@@ -211,12 +216,13 @@ public class AskService {
     }
 
     /**
-     * A rough cost estimate before the call: about 4 characters per token for the input,
-     * plus an assumed answer length. Settled to the exact cost afterwards.
+     * The most this call can cost (Phase 7). Input: one token per character, a generous upper bound
+     * (real text averages about 4 characters per token). Output: the longest answer allowed.
+     * Settled to the exact cost afterwards, which can only bring the total DOWN.
      */
-    private long estimateMicros(String model, String question) {
-        int inputTokens = (props.ai().systemPrompt().length() + question.length()) / 4 + 1;
-        int outputTokens = props.ai().estimatedOutputTokens();
+    private long worstCaseMicros(String model, String question) {
+        int inputTokens = props.ai().systemPrompt().length() + question.length();
+        int outputTokens = props.ai().maxOutputTokens();
         return BudgetGuard.toMicros(costCalculator.cost(model, inputTokens, outputTokens));
     }
 

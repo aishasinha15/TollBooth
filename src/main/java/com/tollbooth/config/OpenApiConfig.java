@@ -1,5 +1,6 @@
 package com.tollbooth.config;
 
+import com.tollbooth.security.AdminKeyAuthFilter;
 import com.tollbooth.security.ApiKeyAuthFilter;
 import io.swagger.v3.oas.models.Components;
 import io.swagger.v3.oas.models.OpenAPI;
@@ -17,18 +18,25 @@ import org.springframework.context.annotation.Configuration;
 public class OpenApiConfig {
 
     private static final String SCHEME = "apiKey";
+    private static final String ADMIN_SCHEME = "adminKey";
 
     @Bean
     public OpenAPI tollboothOpenApi() {
         return new OpenAPI()
                 .info(new Info()
                         .title("Tollbooth API")
-                        .version("0.6.0")
+                        .version("1.0.0")
                         .description("AI gateway for consumer apps' AI assistants"))
-                .components(new Components().addSecuritySchemes(SCHEME, new SecurityScheme()
-                        .type(SecurityScheme.Type.APIKEY)
-                        .in(SecurityScheme.In.HEADER)
-                        .name(ApiKeyAuthFilter.HEADER)))
+                .components(new Components()
+                        .addSecuritySchemes(SCHEME, new SecurityScheme()
+                                .type(SecurityScheme.Type.APIKEY)
+                                .in(SecurityScheme.In.HEADER)
+                                .name(ApiKeyAuthFilter.HEADER))
+                        // Used only by the /admin endpoints (see AdminController)
+                        .addSecuritySchemes(ADMIN_SCHEME, new SecurityScheme()
+                                .type(SecurityScheme.Type.APIKEY)
+                                .in(SecurityScheme.In.HEADER)
+                                .name(AdminKeyAuthFilter.HEADER)))
                 .addSecurityItem(new SecurityRequirement().addList(SCHEME));
     }
 }

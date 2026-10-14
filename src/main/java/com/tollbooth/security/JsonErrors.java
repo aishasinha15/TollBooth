@@ -19,6 +19,7 @@ public final class JsonErrors {
         response.setStatus(status);
         response.setContentType("application/json");
         response.getWriter().write(
-                "{\"status\":" + status + ",\"error\":\"Unauthorized\",\"message\":\"" + message + "\"}");
+                "{\"status\":" + status + ",\"error\":\"" + (status == 403 ? "Forbidden" : "Unauthorized")
+                        + "\",\"message\":\"" + message + "\"}");
     }
 }

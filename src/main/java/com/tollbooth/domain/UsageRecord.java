@@ -55,8 +55,11 @@ public class UsageRecord {
     @Column(name = "cache_result", nullable = false, length = 16)
     private CacheResult cacheResult;
 
-    /** Why the router picked this model, e.g. "hard: 3 conditions". */
-    @Column(name = "route_reason")
+    /**
+     * Why this answer happened: router score, cache notes, retries, fallbacks.
+     * Phase 7: 1000 characters (the default 255 was too short once retry notes were added).
+     */
+    @Column(name = "route_reason", length = 1000)
     private String routeReason;
 
     @Column(name = "latency_ms", nullable = false)

@@ -43,8 +43,17 @@ tollbooth:
     # The cheap model is also the fallback if the smart one fails, and the only model once the budget runs low.
     cheap-model: gemini-3.5-flash-lite
     smart-model: gemini-3.6-flash
-    # Answer length assumed when reserving budget before a call; the real cost is settled afterwards
-    estimated-output-tokens: 400
+    # Phase 7: the longest answer the AI may give, thinking included. The budget reserves this
+    # worst case before each call, so spending can never pass the hard stop (the 267% bug).
+    max-output-tokens: 2048
+    # Phase 7: if a model is busy (Google 500/503), wait this long and ask it once more before falling back
+    retry-delay-ms: 2000
+    # If a model is unavailable for this many requests in a row, skip it for open-seconds
+    # and send its questions straight to the fallback (no wasted calls or retry waits).
+    # Then one trial request tests it again. Current states: GET /v1/status
+    circuit-breaker:
+      failure-threshold: 3
+      open-seconds: 60
     # The last two sentences tell the AI how to treat masked private data (Phase 4)
     system-prompt: >-
       You are a helpful assistant inside a consumer app.
@@ -76,22 +85,45 @@ tollbooth:
     warn-at-percent: 80
     hard-stop-percent: 120
     timezone: Asia/Kolkata
-  # Answer cache (Phase 6). Only GENERAL questions with no private data are ever cached.
+  # Answer cache (Phase 6, reworked in Phase 7). Only GENERAL questions with no private data are cached.
   #   exact cache    : same question after lower-casing and removing punctuation
-  #   semantic cache : different words, same meaning, judged by embedding similarity (0 to 1):
-  #     >= auto-accept-threshold              -> reuse straight away (near-identical wording)
-  #     semantic-threshold .. auto-accept     -> grey zone: for HARD questions the cheap model confirms
-  #                                              "same question?" first; for EASY ones it's a miss (a fresh
-  #                                              cheap answer costs about as much as the check would)
-  #     < semantic-threshold                  -> miss
-  # Why a grey zone: measured scores overlap. "exchange policy" scored 0.925 against "return policy"
-  # (different answer), while "can I send back an item" scored 0.914 (same answer).
+  #   same meaning   : "retrieve, then verify"
+  #     1. retrieve: embeddings find saved questions with similarity >= semantic-threshold (most similar first)
+  #     2. verify:   a judge checks the top few: does one answer really fit both questions?
+  # Why step 2: Phase 7 measured 50 labelled pairs. "3-day vs 5-day Goa trip" scored 0.975 (different answer)
+  # while "Can I return shoes that don't fit?" scored 0.873 (same answer). No similarity cut-off is safe.
   cache:
     enabled: true
     ttl: 24h
     semantic-threshold: 0.88
-    auto-accept-threshold: 0.94
+    # 0.99 = effectively off: everything goes through the judge (measured: 0.98 was the lowest line with no wrong hits)
+    auto-accept-threshold: 0.99
     max-semantic-entries: 500
+    # Who checks "does one answer really fit both questions?" Measured on 50 labelled pairs (Phase 7):
+    #   gemini          : YES/NO from the cheap Gemini model. Right on 38 of 39 pairs (97.4%), about $0.00004 a check
+    #   duplicate-model : open-source quora-distilroberta-base in its own container. Free, but right on only 18 of 39 (46%)
+    judge: gemini
+    # Check EASY questions too, not only HARD ones. Measured: about 6 in 10 checks said YES, and a check costs
+    # about 1/40 of a real cheap answer, so checking pays for itself.
+    check-easy-questions: true
+    # Only used by the duplicate model: score (0 to 1) needed to count as "same answer"
+    duplicate-threshold: 0.5
+    # How many of the most similar saved questions a FREE judge checks (Gemini checks only the top one)
+    rerank-top-k: 3
+  # Phase 7 experiment: the duplicate-question model container (only used with judge: duplicate-model)
+  duplicate-checker:
+    base-url: http://localhost:8001
+    timeout-ms: 3000
+  # Admin API (/admin/**): create apps and their API keys. The key comes ONLY from an environment variable.
+  # If TOLLBOOTH_ADMIN_KEY is not set, the admin API is switched off.
+  admin:
+    api-key: ${TOLLBOOTH_ADMIN_KEY:}
+  # Phase 7 developer tool: POST /v1/eval/cache-threshold measures the cache on labelled pairs.
+  # Turn it off (false) in production: it is not meant for apps.
+  eval:
+    enabled: true
+    # Pause between YES/NO checks, to stay under the free tier's requests-per-minute limit
+    check-delay-ms: 4000
   demo:
     app-name: DemoShop
     # The demo app's API key. Only its SHA-256 hash is stored in the database.

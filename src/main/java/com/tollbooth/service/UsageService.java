@@ -14,6 +14,8 @@ import java.math.BigDecimal;
 @Service
 public class UsageService {
 
+    private static final int MAX_REASON = 1000;
+
     private final UsageRecordRepository usageRecords;
     private final ClientAppRepository clientApps;
 
@@ -30,6 +32,10 @@ public class UsageService {
         // getReferenceById gives a lightweight stand-in for the app (just its id),
         // without running a SELECT. Enough to fill the foreign key.
         ClientApp app = clientApps.getReferenceById(appId);
+        // Never let a long explanation fail the insert: the column holds 1000 characters
+        if (routeReason != null && routeReason.length() > MAX_REASON) {
+            routeReason = routeReason.substring(0, MAX_REASON - 1) + "\u2026";
+        }
         usageRecords.save(new UsageRecord(app, userId, model, inputTokens, outputTokens,
                 costUsd, cacheResult, routeReason, latencyMs, piiMaskedCount));
     }

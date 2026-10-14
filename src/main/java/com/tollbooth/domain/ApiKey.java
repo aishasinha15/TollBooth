@@ -32,6 +32,13 @@ public class ApiKey {
     @JoinColumn(name = "client_app_id")
     private ClientApp clientApp;
 
+    /**
+     * The first characters of the key, e.g. "tb_live_Q3x9", so a person can tell keys apart
+     * in a list without the key ever being shown again. Nullable so older rows stay valid.
+     */
+    @Column(name = "key_prefix", length = 16)
+    private String keyPrefix;
+
     @Column(nullable = false)
     private boolean active = true;
 
@@ -41,14 +48,16 @@ public class ApiKey {
     protected ApiKey() {
     }
 
-    public ApiKey(String keyHash, ClientApp clientApp) {
+    public ApiKey(String keyHash, String keyPrefix, ClientApp clientApp) {
         this.keyHash = keyHash;
+        this.keyPrefix = keyPrefix;
         this.clientApp = clientApp;
     }
 
     public Long getId() { return id; }
     public String getKeyHash() { return keyHash; }
     public ClientApp getClientApp() { return clientApp; }
+    public String getKeyPrefix() { return keyPrefix; }
     public boolean isActive() { return active; }
     public Instant getCreatedAt() { return createdAt; }
 

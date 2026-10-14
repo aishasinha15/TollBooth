@@ -1,0 +1,500 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tollbooth dashboard</title>
+<!--
+  Tollbooth usage dashboard: one self-contained page, no libraries, no build step.
+  Served by Spring Boot from src/main/resources/static, so it's at http://localhost:8080/dashboard.html
+  It signs in with an app's own API key and reads three endpoints:
+    GET /v1/usage          one day's numbers
+    GET /v1/usage/daily    the last 7 days
+    GET /v1/usage/recent   the newest requests (no question text: Tollbooth never stores it)
+  The key is kept in sessionStorage: it is forgotten when this browser tab closes.
+-->
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7;
+    --surface: #fcfcfb;
+    --ink: #0b0b0b;
+    --ink-2: #52514e;
+    --muted: #898781;
+    --grid: #e1e0d9;
+    --axis: #c3c2b7;
+    --border: rgba(11, 11, 11, 0.10);
+    --ai: #2a78d6;        /* series 1: answered by AI */
+    --cache: #eb6834;     /* series 2: answered from the cache */
+    --track: #cde2fb;
+    --good: #0ca30c;
+    --warning: #fab219;
+    --critical: #d03b3b;
+    --wash: rgba(11, 11, 11, 0.04);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+      --grid: #2c2c2a; --axis: #383835; --border: rgba(255, 255, 255, 0.10);
+      --ai: #3987e5; --cache: #d95926; --track: #184f95; --wash: rgba(255, 255, 255, 0.05);
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255, 255, 255, 0.10);
+    --ai: #3987e5; --cache: #d95926; --track: #184f95; --wash: rgba(255, 255, 255, 0.05);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--page); color: var(--ink);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 20px; margin: 0; font-weight: 650; }
+  h2 { font-size: 15px; margin: 0 0 4px; font-weight: 600; }
+  .sub { color: var(--ink-2); margin: 0 0 16px; font-size: 13px; }
+  .muted { color: var(--muted); }
+  button, input {
+    font: inherit; color: var(--ink); background: var(--surface);
+    border: 1px solid var(--border); border-radius: 8px; padding: 7px 12px;
+  }
+  button { cursor: pointer; }
+  button:hover { background: var(--wash); }
+  button.primary { background: var(--ai); color: #fff; border-color: transparent; }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--ai); outline-offset: 2px; }
+
+  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .controls label { display: flex; gap: 6px; align-items: center; color: var(--ink-2); font-size: 13px; }
+
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+  .grid { display: grid; gap: 12px; }
+  .tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 12px; }
+  .two { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); margin-bottom: 12px; }
+  @media (max-width: 860px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } .two { grid-template-columns: minmax(0, 1fr); } }
+  #daily-chart { overflow-x: auto; }
+  #daily-chart svg { min-width: 460px; display: block; }
+
+  .tile .label { color: var(--ink-2); font-size: 13px; }
+  .tile .value { font-size: 28px; font-weight: 650; margin: 2px 0; }
+  .tile .note { color: var(--muted); font-size: 12px; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 13px; color: var(--ink-2); margin: 8px 0; }
+  .key { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+
+  .meter { position: relative; height: 14px; border-radius: 7px; background: var(--track); margin: 28px 0 26px; }
+  .meter .fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 7px; }
+  .meter .mark { position: absolute; top: -6px; bottom: -6px; width: 1px; background: var(--ink-2); }
+  .meter .mark span { position: absolute; top: -18px; transform: translateX(-50%); font-size: 11px; color: var(--ink-2); white-space: nowrap; }
+  .meter .mark span.below { top: 26px; }
+  .status { font-size: 13px; color: var(--ink-2); }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+
+  .stack { display: flex; gap: 2px; height: 18px; margin: 10px 0 4px; }
+  .stack div { height: 100%; }
+  .stack div:first-child { border-radius: 4px 0 0 4px; }
+  .stack div:last-child { border-radius: 0 4px 4px 0; }
+  .stack div:only-child { border-radius: 4px; }
+  .empty-bar { height: 18px; border-radius: 4px; background: var(--wash); margin: 10px 0 4px; }
+
+  .stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 16px; margin-top: 8px; }
+  .stat .n { font-size: 20px; font-weight: 650; }
+  .stat .t { font-size: 12px; color: var(--ink-2); }
+
+  svg text { fill: var(--muted); font-size: 11px; }
+  .col { cursor: pointer; }
+  .col:hover .hit { fill: var(--wash); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; font-weight: 600; color: var(--ink-2); padding: 8px 8px; border-bottom: 1px solid var(--axis); white-space: nowrap; }
+  td { padding: 8px 8px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .scroll { overflow-x: auto; }
+  .reason { color: var(--ink-2); max-width: 420px; }
+  .badge { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+
+  #tooltip {
+    position: fixed; pointer-events: none; background: var(--surface); color: var(--ink);
+    border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 12px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12); display: none; z-index: 10; min-width: 150px;
+  }
+  #tooltip .row { display: flex; justify-content: space-between; gap: 12px; }
+
+  .login { max-width: 420px; margin: 12vh auto 0; }
+  .login form { display: grid; gap: 10px; margin-top: 12px; }
+  .error { color: var(--critical); font-size: 13px; min-height: 18px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <section id="login" class="card login" hidden>
+    <h1>Tollbooth dashboard</h1>
+    <p class="sub">Sign in with your app's API key to see its usage. The key stays in this browser tab and is forgotten when you close it.</p>
+    <form id="login-form">
+      <input id="key-input" type="password" autocomplete="off" placeholder="X-Api-Key, e.g. tb_live_..." aria-label="API key" required>
+      <button class="primary" type="submit">Open dashboard</button>
+      <div class="error" id="login-error" role="alert"></div>
+    </form>
+  </section>
+
+  <main id="app" hidden>
+    <header>
+      <div>
+        <h1 id="app-name">Tollbooth</h1>
+        <div class="sub" style="margin:0" id="updated">Loading…</div>
+      </div>
+      <div class="controls">
+        <label>Day <input id="day" type="date"></label>
+        <button id="today">Today</button>
+        <button id="refresh">Refresh</button>
+        <label><input id="auto" type="checkbox"> Auto-refresh (15 s)</label>
+        <button id="signout">Sign out</button>
+      </div>
+    </header>
+
+    <div class="grid tiles">
+      <div class="card tile"><div class="label">Questions</div><div class="value" id="t-questions">–</div><div class="note" id="t-questions-note"></div></div>
+      <div class="card tile"><div class="label">Answered from the cache</div><div class="value" id="t-hitrate">–</div><div class="note" id="t-hitrate-note"></div></div>
+      <div class="card tile"><div class="label">Spent</div><div class="value" id="t-spent">–</div><div class="note" id="t-spent-note"></div></div>
+      <div class="card tile"><div class="label">Saved by the cache (estimate)</div><div class="value" id="t-saved">–</div><div class="note" id="t-saved-note"></div></div>
+    </div>
+
+    <div class="grid two">
+      <section class="card">
+        <h2>Last 7 days</h2>
+        <p class="sub">Questions per day. Click a day to see its numbers.</p>
+        <div class="legend"><span><span class="key" style="background:var(--ai)"></span>Answered by AI</span><span><span class="key" style="background:var(--cache)"></span>From the cache</span></div>
+        <div id="daily-chart"></div>
+        <div class="muted" id="daily-total" style="font-size:12px"></div>
+      </section>
+
+      <section class="card">
+        <h2>Daily budget</h2>
+        <p class="sub" id="budget-sub"></p>
+        <div class="meter" id="meter" role="img"></div>
+        <div class="status" id="budget-status"></div>
+
+        <h2 style="margin-top:20px">Where answers came from</h2>
+        <div id="split"></div>
+        <div class="legend" id="split-legend"></div>
+      </section>
+    </div>
+
+    <div class="grid two">
+      <section class="card">
+        <h2>Models</h2>
+        <p class="sub">AI answers only (cache hits use no model).</p>
+        <div class="scroll"><table>
+          <thead><tr><th>Model</th><th class="num">Answers</th><th class="num">Input tokens</th><th class="num">Output tokens</th><th class="num">Cost</th></tr></thead>
+          <tbody id="models"></tbody>
+        </table></div>
+      </section>
+      <section class="card">
+        <h2>Reliability and speed</h2>
+        <div class="stats">
+          <div class="stat"><div class="n" id="s-retries">–</div><div class="t">Busy model, retried once</div></div>
+          <div class="stat"><div class="n" id="s-fallbacks">–</div><div class="t">Fell back to the cheap model</div></div>
+          <div class="stat"><div class="n" id="s-circuit">–</div><div class="t">Skipped an unavailable model (circuit open)</div></div>
+          <div class="stat"><div class="n" id="s-downgraded">–</div><div class="t">Downgraded to save budget</div></div>
+          <div class="stat"><div class="n" id="s-cut">–</div><div class="t">Answers cut at the length limit</div></div>
+          <div class="stat"><div class="n" id="s-private">–</div><div class="t">Questions with private data masked</div></div>
+          <div class="stat" style="grid-column: 1 / -1"><div class="n" id="s-latency">–</div><div class="t">Average time: cache hit vs AI answer</div></div>
+        </div>
+      </section>
+    </div>
+
+    <section class="card">
+      <h2>Recent requests</h2>
+      <p class="sub">The newest 20. What happened, never what was asked: Tollbooth doesn't store question text.</p>
+      <div class="scroll"><table>
+        <thead><tr><th>Time</th><th>User</th><th>Result</th><th>Model</th><th class="num">Cost</th><th class="num">Time taken</th><th>Why</th></tr></thead>
+        <tbody id="recent"></tbody>
+      </table></div>
+    </section>
+  </main>
+</div>
+<div id="tooltip" role="tooltip"></div>
+
+<script>
+(() => {
+  const STORE = 'tollbooth.apiKey';
+  const $ = id => document.getElementById(id);
+  const svgNs = 'http://www.w3.org/2000/svg';
+  let apiKey = null;
+  let timer = null;
+
+  // ---------- storage (can fail in private windows, so every access is guarded) ----------
+  const readKey = () => { try { return sessionStorage.getItem(STORE); } catch (e) { return null; } };
+  const saveKey = k => { try { sessionStorage.setItem(STORE, k); } catch (e) { /* kept in memory only */ } };
+  const dropKey = () => { try { sessionStorage.removeItem(STORE); } catch (e) { /* nothing to drop */ } };
+
+  // ---------- formatting ----------
+  const usd = v => {
+    const n = Number(v) || 0;
+    if (n === 0) return '$0';
+    if (n >= 1) return '$' + n.toFixed(2);
+    if (n < 0.001) return '$' + Number(n.toPrecision(2)).toString(); // e.g. a $0.000039 YES/NO check
+    return '$' + parseFloat(n.toFixed(4)).toString();
+  };
+  const int = v => (Number(v) || 0).toLocaleString('en-US');
+  const ms = v => { const n = Number(v) || 0; return n >= 1000 ? (n / 1000).toFixed(1) + ' s' : n + ' ms'; };
+  const pct = v => (Number(v) || 0).toFixed(Number(v) % 1 === 0 ? 0 : 1) + '%';
+  const todayIso = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); };
+  const shortDay = iso => { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d).toLocaleDateString('en-US', { weekday: 'short', day: 'numeric' }); };
+  const el = (tag, attrs = {}, text) => {
+    const node = tag.startsWith('svg:') ? document.createElementNS(svgNs, tag.slice(4)) : document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+    if (text !== undefined) node.textContent = text;   // textContent: data is never treated as HTML
+    return node;
+  };
+
+  // ---------- API ----------
+  async function get(path) {
+    const res = await fetch(path, { headers: { 'X-Api-Key': apiKey } });
+    if (res.status === 401 || res.status === 403) throw new Error('unauthorized');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return res.json();
+  }
+
+  async function load() {
+    const day = $('day').value || todayIso();
+    $('updated').textContent = 'Loading…';
+    try {
+      const [report, daily, recent] = await Promise.all([
+        get('/v1/usage?date=' + encodeURIComponent(day)),
+        get('/v1/usage/daily?days=7'),
+        get('/v1/usage/recent?limit=20')
+      ]);
+      render(report, daily, recent);
+      $('updated').textContent = 'Updated ' + new Date().toLocaleTimeString() + ' · showing ' + (day === todayIso() ? 'today' : day);
+    } catch (e) {
+      if (e.message === 'unauthorized') { signOut('That key was not accepted. It may be wrong or revoked.'); return; }
+      $('updated').textContent = 'Could not load (' + e.message + '). Is Tollbooth running?';
+    }
+  }
+
+  // ---------- rendering ----------
+  function render(r, daily, recent) {
+    $('app-name').textContent = r.app + ' · Tollbooth';
+
+    const hits = r.cacheHitsExact + r.cacheHitsSemantic;
+    $('t-questions').textContent = int(r.questions);
+    $('t-questions-note').textContent = int(r.answeredByAi) + ' by AI, ' + int(hits) + ' from the cache';
+    $('t-hitrate').textContent = r.questions ? pct(r.cacheHitRatePercent) : '–';
+    $('t-hitrate-note').textContent = int(r.cacheHitsExact) + ' exact, ' + int(r.cacheHitsSemantic) + ' same-meaning';
+    $('t-spent').textContent = usd(r.spentUsd);
+    $('t-spent-note').textContent = 'of ' + usd(r.dailyBudgetUsd) + ' daily budget';
+    $('t-saved').textContent = usd(r.estimatedSavedByCacheUsd);
+    $('t-saved-note').textContent = hits ? int(hits) + ' hits × ' + usd(r.averageAiAnswerCostUsd) + ' average AI answer' : 'No cache hits yet';
+
+    renderMeter(r);
+    renderSplit(r);
+    renderDaily(daily, r.date);
+
+    const models = $('models'); models.replaceChildren();
+    if (!r.byModel.length) {
+      const tr = el('tr'); tr.append(el('td', { colspan: 5, class: 'muted' }, 'No AI answers on this day.')); models.append(tr);
+    }
+    for (const m of r.byModel) {
+      const tr = el('tr');
+      tr.append(el('td', {}, m.model), el('td', { class: 'num' }, int(m.answers)),
+        el('td', { class: 'num' }, int(m.inputTokens)), el('td', { class: 'num' }, int(m.outputTokens)),
+        el('td', { class: 'num' }, usd(m.costUsd)));
+      models.append(tr);
+    }
+
+    $('s-retries').textContent = int(r.retries);
+    $('s-fallbacks').textContent = int(r.fallbacks);
+    $('s-circuit').textContent = int(r.circuitSkips);
+    $('s-downgraded').textContent = int(r.downgradedForBudget);
+    $('s-cut').textContent = int(r.answersCutOff);
+    $('s-private').textContent = int(r.questionsWithPrivateData);
+    $('s-latency').textContent = (hits ? ms(r.averageLatencyMsCacheHit) : '–') + ' vs ' + (r.answeredByAi ? ms(r.averageLatencyMsAiAnswer) : '–');
+
+    renderRecent(recent);
+  }
+
+  function renderMeter(r) {
+    const used = Number(r.budgetUsedPercent) || 0;
+    const scaleMax = Math.max(130, used + 10);
+    const at = p => (Math.min(p, scaleMax) / scaleMax * 100) + '%';
+    const meter = $('meter'); meter.replaceChildren();
+    const colour = used >= 100 ? 'var(--critical)' : used >= 80 ? 'var(--warning)' : 'var(--ai)';
+    meter.append(el('div', { class: 'fill', style: 'width:' + at(used) + ';background:' + colour }));
+    [[80, 'warn', false], [100, 'cheap model only', true], [120, 'stop', false]].forEach(([p, label, below]) => {
+      const mark = el('div', { class: 'mark', style: 'left:' + at(p) });
+      mark.append(el('span', below ? { class: 'below' } : {}, p + '% ' + label));
+      meter.append(mark);
+    });
+    meter.setAttribute('aria-label', 'Budget used: ' + pct(used));
+    $('budget-sub').textContent = usd(r.spentUsd) + ' of ' + usd(r.dailyBudgetUsd) + ' used (' + pct(used) + ')';
+    const status = $('budget-status'); status.replaceChildren();
+    const [dot, text] = used >= 120 ? ['var(--critical)', 'Stopped: no more AI calls until midnight. Cache hits still work.']
+      : used >= 100 ? ['var(--critical)', 'Over budget: every question goes to the cheap model.']
+      : used >= 80 ? ['var(--warning)', 'Warning: responses now carry budgetWarning: true.']
+      : ['var(--good)', 'Within budget.'];
+    status.append(el('span', { class: 'dot', style: 'background:' + dot }), document.createTextNode(text));
+  }
+
+  function renderSplit(r) {
+    const hits = r.cacheHitsExact + r.cacheHitsSemantic;
+    const parts = [
+      { name: 'Answered by AI', n: r.answeredByAi, colour: 'var(--ai)', detail: usd(r.spentUsd) + ' spent' },
+      { name: 'From the cache', n: hits, colour: 'var(--cache)', detail: int(r.cacheHitsExact) + ' exact, ' + int(r.cacheHitsSemantic) + ' same-meaning' }
+    ];
+    const split = $('split'); split.replaceChildren();
+    const legend = $('split-legend'); legend.replaceChildren();
+    if (!r.questions) { split.append(el('div', { class: 'empty-bar' })); legend.append(el('span', { class: 'muted' }, 'No questions on this day.')); return; }
+    const bar = el('div', { class: 'stack', role: 'img', 'aria-label': parts.map(p => p.name + ' ' + p.n).join(', ') });
+    for (const p of parts.filter(p => p.n > 0)) {
+      const seg = el('div', { style: 'flex:' + p.n + ';background:' + p.colour });
+      tip(seg, [p.name, [['Questions', int(p.n)], ['Share', pct(p.n / r.questions * 100)], ['', p.detail]]]);
+      bar.append(seg);
+    }
+    split.append(bar);
+    for (const p of parts) {
+      const item = el('span'); item.append(el('span', { class: 'key', style: 'background:' + p.colour }), document.createTextNode(p.name + ': ' + int(p.n)));
+      legend.append(item);
+    }
+  }
+
+  function renderDaily(days, selected) {
+    const W = 560, H = 200, left = 34, right = 8, top = 12, bottom = 26;
+    const max = Math.max(1, ...days.map(d => d.questions));
+    const step = niceStep(max);
+    const yMax = Math.ceil(max / step) * step;
+    const y = v => top + (H - top - bottom) * (1 - v / yMax);
+    const band = (W - left - right) / days.length;
+    const barW = Math.min(24, band * 0.5);
+
+    const svg = el('svg:svg', { viewBox: `0 0 ${W} ${H}`, width: '100%', role: 'img',
+      'aria-label': 'Questions per day for the last 7 days' });
+    for (let v = 0; v <= yMax; v += step) {
+      svg.append(el('svg:line', { x1: left, x2: W - right, y1: y(v), y2: y(v), stroke: v === 0 ? 'var(--axis)' : 'var(--grid)', 'stroke-width': 1 }));
+      svg.append(el('svg:text', { x: left - 6, y: y(v) + 4, 'text-anchor': 'end' }, int(v)));
+    }
+    days.forEach((d, i) => {
+      const cx = left + band * i + band / 2;
+      const g = el('svg:g', { class: 'col', tabindex: 0 });
+      g.append(el('svg:rect', { class: 'hit', x: cx - band / 2, y: top, width: band, height: H - top - bottom, fill: 'transparent', rx: 6 }));
+      // Stack: AI answers at the bottom, cache hits on top, a 2px surface gap between them
+      let base = y(0);
+      const segs = [{ n: d.answeredByAi, colour: 'var(--ai)' }, { n: d.cacheHits, colour: 'var(--cache)' }].filter(s => s.n > 0);
+      segs.forEach((s, k) => {
+        const h = y(0) - y(s.n) - (k > 0 ? 2 : 0);
+        const topY = base - (k > 0 ? 2 : 0) - h;
+        g.append(el('svg:path', { d: barPath(cx - barW / 2, topY, barW, h, k === segs.length - 1), fill: s.colour }));
+        base = topY;
+      });
+      const label = el('svg:text', { x: cx, y: H - 8, 'text-anchor': 'middle' }, shortDay(d.date));
+      if (d.date === selected) { label.setAttribute('style', 'fill:var(--ink);font-weight:600'); }
+      g.append(label);
+      tip(g, [shortDay(d.date) + ' · ' + d.date, [['Questions', int(d.questions)], ['Answered by AI', int(d.answeredByAi)], ['From the cache', int(d.cacheHits)], ['Spent', usd(d.spentUsd)]]]);
+      g.addEventListener('click', () => { $('day').value = d.date; load(); });
+      g.addEventListener('keydown', e => { if (e.key === 'Enter') { $('day').value = d.date; load(); } });
+      svg.append(g);
+    });
+    $('daily-chart').replaceChildren(svg);
+    const total = days.reduce((s, d) => s + Number(d.spentUsd), 0);
+    const q = days.reduce((s, d) => s + d.questions, 0);
+    $('daily-total').textContent = int(q) + ' questions and ' + usd(total) + ' spent in 7 days';
+  }
+
+  // A column with a 4px rounded top (only on the topmost segment), square at the bottom
+  function barPath(x, yTop, w, h, roundTop) {
+    if (h <= 0) return '';
+    const r = roundTop ? Math.min(4, h, w / 2) : 0;
+    return `M${x},${yTop + h} V${yTop + r} Q${x},${yTop} ${x + r},${yTop} H${x + w - r} Q${x + w},${yTop} ${x + w},${yTop + r} V${yTop + h} Z`;
+  }
+
+  function niceStep(max) {
+    const raw = max / 4;
+    const p = Math.pow(10, Math.floor(Math.log10(raw)));
+    return [1, 2, 5, 10].map(m => m * p).find(s => s >= raw) || p * 10;
+  }
+
+  const RESULT = {
+    HIT_EXACT: ['Exact hit', 'var(--cache)'],
+    HIT_SEMANTIC: ['Same-meaning hit', 'var(--cache)'],
+    MISS: ['AI answer', 'var(--ai)']
+  };
+
+  function renderRecent(rows) {
+    const body = $('recent'); body.replaceChildren();
+    if (!rows.length) { const tr = el('tr'); tr.append(el('td', { colspan: 7, class: 'muted' }, 'No requests yet. Send one with POST /v1/ask.')); body.append(tr); return; }
+    for (const r of rows) {
+      const [label, colour] = RESULT[r.cacheResult] || [r.cacheResult, 'var(--muted)'];
+      const result = el('span', { class: 'badge' });
+      result.append(el('span', { class: 'dot', style: 'background:' + colour + ';margin:0' }), document.createTextNode(label));
+      const time = new Date(r.time);
+      const tr = el('tr');
+      const tdResult = el('td'); tdResult.append(result);
+      const reason = r.routeReason || '';
+      tr.append(
+        el('td', { class: 'num', style: 'text-align:left', title: time.toLocaleString() }, time.toLocaleTimeString()),
+        el('td', {}, r.userId),
+        tdResult,
+        el('td', {}, r.model || '–'),
+        el('td', { class: 'num' }, usd(r.costUsd)),
+        el('td', { class: 'num' }, ms(r.latencyMs)),
+        el('td', { class: 'reason', title: reason }, reason.length > 140 ? reason.slice(0, 139) + '…' : reason)
+      );
+      body.append(tr);
+    }
+  }
+
+  // ---------- tooltip ----------
+  const tooltip = $('tooltip');
+  function tip(node, [title, rows]) {
+    const show = e => {
+      tooltip.replaceChildren(el('div', { style: 'font-weight:600;margin-bottom:4px' }, title));
+      for (const [k, v] of rows) {
+        const row = el('div', { class: 'row' }); row.append(el('span', { class: 'muted' }, k), el('span', {}, v)); tooltip.append(row);
+      }
+      tooltip.style.display = 'block';
+      move(e);
+    };
+    const move = e => {
+      const pad = 14, w = tooltip.offsetWidth, h = tooltip.offsetHeight;
+      const x = e.clientX + pad + w > window.innerWidth ? e.clientX - pad - w : e.clientX + pad;
+      const y = Math.min(e.clientY + pad, window.innerHeight - h - 8);
+      tooltip.style.left = x + 'px'; tooltip.style.top = y + 'px';
+    };
+    node.addEventListener('mouseenter', show);
+    node.addEventListener('mousemove', move);
+    node.addEventListener('mouseleave', () => { tooltip.style.display = 'none'; });
+  }
+
+  // ---------- sign in / out ----------
+  function signIn(key) {
+    apiKey = key; saveKey(key);
+    $('login').hidden = true; $('app').hidden = false;
+    $('day').value = todayIso();
+    load();
+  }
+  function signOut(message) {
+    apiKey = null; dropKey();
+    clearInterval(timer); timer = null; $('auto').checked = false;
+    $('app').hidden = true; $('login').hidden = false;
+    $('login-error').textContent = message || '';
+    $('key-input').value = ''; $('key-input').focus();
+  }
+
+  $('login-form').addEventListener('submit', e => { e.preventDefault(); const k = $('key-input').value.trim(); if (k) signIn(k); });
+  $('refresh').addEventListener('click', load);
+  $('today').addEventListener('click', () => { $('day').value = todayIso(); load(); });
+  $('day').addEventListener('change', load);
+  $('signout').addEventListener('click', () => signOut());
+  $('auto').addEventListener('change', e => { clearInterval(timer); timer = e.target.checked ? setInterval(load, 15000) : null; });
+
+  const saved = readKey();
+  if (saved) signIn(saved); else signOut();
+})();
+</script>
+</body>
+</html>
